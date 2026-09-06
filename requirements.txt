@@ -1,0 +1,31 @@
+# AI Presenter Pipeline — Phase 1 dependencies
+# ----------------------------------------------------------------------------
+# IMPORTANT (RTX 5060 / Blackwell sm_120): install torch + torchaudio FIRST,
+# from the CUDA 12.8 wheel index, BEFORE running `pip install -r requirements.txt`:
+#
+#     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+#
+# torch is intentionally NOT pinned here so a TTS package cannot silently drag in
+# a non-Blackwell build. After installing everything, verify:
+#     python -c "import torch; print(torch.cuda.is_available())"   # must print True
+# See README.md "Install" for the full ordered steps.
+# ----------------------------------------------------------------------------
+
+# Core
+pyyaml>=6.0
+requests>=2.31        # Ollama HTTP client (local only — no cloud SDKs)
+numpy>=1.24
+soundfile>=0.12       # write .wav output
+
+# TTS engines (both implemented; selected via config.yaml tts.engine)
+chatterbox-tts>=0.1.1 # Resemble Chatterbox (MIT) — English + multilingual (Turkish)
+kokoro>=0.9.4         # Kokoro (Apache) — English only
+misaki[en]>=0.9.4     # Kokoro's G2P / phonemizer backend
+
+# Phase 3 — shorts captions (local transcription). ffmpeg (system) does the rest.
+faster-whisper>=1.0.0 # MIT; local Whisper for burned-in captions on shorts
+
+# Phase 4 — YouTube upload (OAuth; uploads private by default)
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2

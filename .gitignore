@@ -1,0 +1,36 @@
+# --- Python venv & caches ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Secrets / credentials (§8: never commit) ---
+.env
+*token*.json
+client_secret*.json
+credentials*.json
+
+# --- Generated media & large artifacts ---
+audio/
+anim/
+renders/
+output/
+
+# --- Downloaded gameplay footage (large; may be licensed — don't redistribute) ---
+content/gameplay/*
+!content/gameplay/README.md
+
+# --- Downloaded tools (Real-ESRGAN binary + models; re-download, don't commit) ---
+tools/
+
+# --- Generated content drafts (keep the folders, not the contents) ---
+content/scripts/*
+content/approved/*
+content/data/*
+content/voice/*
+!**/.gitkeep
+
+# --- OS cruft ---
+Thumbs.db
+.DS_Store
+.state/

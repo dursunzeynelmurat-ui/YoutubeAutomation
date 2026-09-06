@@ -1,0 +1,185 @@
+# ============================================================================
+# AI Presenter Pipeline — configuration (single source of truth)
+# PIPELINE.md §6: all tunables live here. No hardcoded paths in scripts.
+# Phase 1 (content engine) uses: paths, llm, content, tts.
+# The youtube block is a Phase 4 placeholder and is NOT read yet.
+# ============================================================================
+
+# --- Paths -------------------------------------------------------------------
+# All relative paths resolve against the automation/ directory (the folder that
+# contains this config.yaml), so the project can be moved without edits.
+paths:
+  data:      content/data       # RSS feeds / prices the LLM reads (never model recall)
+  gameplay:  content/gameplay    # gameplay background loops for brainrot shorts
+  scripts:   content/scripts    # LLM drafts, awaiting human review
+  approved:  content/approved   # scripts cleared for voice (human moves them here)
+  voice:     content/voice      # optional TTS reference sample(s) for cloning
+  audio:     audio              # TTS .wav output
+  anim:      anim               # Audio2Face output (Phase 2)
+  renders:   renders            # presenter passes + plate.png (Phase 3)
+  output:    output             # finished longs / shorts (Phase 3)
+
+# --- Script LLM (Ollama, fully local) ---------------------------------------
+llm:
+  primary:     "qwen2.5:14b-instruct"   # needs CPU offload on 8 GB — fine for batch
+  fallback:    "llama3.1:8b"            # used automatically if primary is unavailable
+  ollama_host: "http://localhost:11434"
+  temperature: 0.7
+  num_ctx:     8192                     # context window; raise if data files are large
+  keep_alive:  0                        # unload model right after generation -> frees VRAM (§2)
+  request_timeout: 600                  # seconds; 14b on CPU offload can be slow
+
+# --- Content settings --------------------------------------------------------
+content:
+  language:     "en"     # "en" or "tr" (override per run with --language)
+  target_words: 900      # rough length target for a long-video monologue
+  # The "not financial advice" disclaimer is PREPENDED to every generated script
+  # (PIPELINE.md §8, non-negotiable). One entry per supported language.
+  disclaimers:
+    en: >-
+      DISCLAIMER: This content is for educational and entertainment purposes only
+      and is not financial advice. It is not a recommendation to buy or sell any
+      security or asset. Always do your own research and consult a licensed
+      financial professional before making any investment decision.
+    tr: >-
+      SORUMLULUK REDDI: Bu içerik yalnızca eğitim ve bilgilendirme amaçlıdır ve
+      yatırım tavsiyesi değildir. Herhangi bir menkul kıymet veya varlığın alım
+      ya da satımı için bir öneri niteliği taşımaz. Yatırım kararı vermeden önce
+      daima kendi araştırmanızı yapın ve lisanslı bir finans uzmanına danışın.
+
+# --- Voice / TTS -------------------------------------------------------------
+# Two engines implemented behind this switch (PIPELINE.md §3 / §7 Phase 1).
+#   chatterbox : Resemble Chatterbox (MIT). English + multilingual (incl. Turkish).
+#                Heavier; supports voice cloning from a reference sample.
+#   kokoro     : Kokoro (Apache). Very light, robust on 8 GB. ENGLISH ONLY.
+# NOTE: Turkish (language: tr) requires engine: chatterbox — Kokoro has no Turkish.
+tts:
+  engine:      "kokoro"       # "chatterbox" or "kokoro"
+  sample_rate: 24000          # output wav sample rate (both engines emit 24 kHz)
+
+  chatterbox:
+    device:       "cuda"      # "cuda" or "cpu"
+    voice_sample: ""          # optional path (rel. to automation/) to a ref .wav for
+                              # voice cloning, e.g. content/voice/ref.wav; "" = default voice
+    exaggeration: 0.5         # Chatterbox expressiveness (0.25-2.0)
+    cfg_weight:   0.5         # Chatterbox pacing / guidance
+
+  kokoro:
+    device: "cuda"            # "cuda" or "cpu"
+    voice:  "am_adam"         # fallback single voice
+    voices: ["am_adam", "am_liam"]   # rotate through these in turns (round-robin per clip)
+    speed:  1.15              # >1 = faster/more energetic delivery
+
+# --- Unreal Engine (Phase 3 — NOT USED IN PHASE 1/2) ------------------------
+# render.py (Phase 3) launches UE headless against this .uproject. The automation/
+# code deliberately lives OUTSIDE the OneDrive-synced project folder so the venv,
+# renders, and media are not sync-churned by OneDrive.
+unreal:
+  project_path: "C:/Users/dursu/OneDrive/Documents/Unreal Projects/AIPresenter/AIPresenter.uproject"
+  engine_path:  "C:/Program Files/Epic Games/UE_5.8"   # contains Engine/Binaries/Win64/UnrealEditor-Cmd.exe
+  presenter_level: "/Game/Maps/Presenter"   # the seated-presenter map — CREATE this (see docs/PHASE3_RENDER.md)
+  camera_actor: "PresenterCam"               # locked presenter camera (renamed from CineCameraActor10)
+  render_fps:   30
+  ref_performance: "/Game/NewMetaHumanPerformance"   # reused by bake.py for identity/config
+
+# --- Render (Phase 3) --------------------------------------------------------
+render:
+  transparent_bg: false       # false = render presenter IN the room (final footage; reliable).
+                              # true = presenter-only on alpha for compositing over plate
+                              # (needs UE alpha output working — see docs/PHASE3_RENDER.md).
+  resolution: [1920, 1080]    # native presenter pass resolution (upscaled to 4K after)
+  output_format: "png"        # PNG image sequence
+  warmup_frames: 32           # MRQ warm-up / engine settle
+  spatial_samples: 1          # (raster path) keep at 1 on 8 GB
+  temporal_samples: 8         # (raster path) AA accumulation
+
+  # --- Photorealism ---
+  path_tracer: false          # false = Lumen (fast, ~1-2s/frame); true = path traced (slow)
+  lumen_hardware_rt: true     # use RTX hardware ray tracing for Lumen GI/reflections (realism)
+  pt_spatial_samples: 36      # (path-tracer only) samples accumulated per frame
+  pt_spp: 64                  # (path-tracer only) r.PathTracing.SamplesPerPixel
+  pt_max_bounces: 4           # (path-tracer only) light bounces
+  # The empty furnished set is rendered ONCE to this file (python pipeline/render.py --plate)
+  plate_file: "renders/plate.png"
+
+# --- Upscale (Phase 3, AI super-resolution to 4K) ---------------------------
+upscale:
+  enabled:  true
+  target:   [3840, 2160]      # final 4K (16:9)
+  tool:     "realesrgan-ncnn-vulkan"   # Vulkan binary — no torch conflicts, runs on 8 GB
+  exe:      "tools/realesrgan/realesrgan-ncnn-vulkan.exe"   # installed under automation/tools
+  model:        "realesrgan-x4plus"    # photoreal x4 model
+  native_scale: 4             # x4plus is 4x-native; ffmpeg then downscales to exact target
+  fp32:         false         # ncnn fp16 is fine and lighter on 8 GB
+  # For very long clips, x4 intermediate frames use a lot of disk. Switch to
+  # model: realesr-animevideov3-x2 + native_scale: 2 for a lighter 2x path.
+
+# --- Composite (Phase 3, ffmpeg) --------------------------------------------
+composite:
+  background: "renders/plate.png"   # baked static office background
+  burn_captions: false              # captions are burned on shorts by default, not longs
+  video_codec: "libx264"
+  crf: 18
+  pixel_format: "yuv420p"
+
+# --- Shorts (Phase 3, ffmpeg + faster-whisper) ------------------------------
+shorts:
+  aspect: [1080, 1920]        # 9:16
+  max_duration: 60            # seconds per short
+  count: 3                    # how many shorts to try to cut from one long
+  whisper_model: "small"      # faster-whisper size: tiny|base|small|medium|large-v3
+  whisper_device: "auto"      # auto -> cuda if available else cpu
+  caption_style: "burned"     # burn captions into the 9:16 clip
+
+
+# --- Brand / persona / monetization (shapes script tone + descriptions) -----
+brand:
+  channel: "Money Sharp"      # <- change to your final pick (see options in chat)
+  channel_description: >-
+    Sharp, no-nonsense money ideas in under a minute. One real, useful insight per
+    video — investing, saving, and the money traps nobody warns you about — explained
+    fast and in plain English. New shorts daily. Educational only, not financial advice.
+  persona: "a sharp, friendly money coach who cuts through jargon and respects the viewer's intelligence"
+  tone: >-
+    energetic but credible — punchy, confident, fast-paced, but EVERY short delivers one
+    real, accurate, useful insight. No hype-only filler, no fake urgency, no false promises.
+  cta: "Follow for one sharp money idea a day."
+  # Appended to every description. Put your real (disclosed) affiliate links here.
+  affiliate_block: |-
+    ————
+    Tools & resources (some links may be affiliate — I may earn a commission at no cost to you):
+    • Brokerage: (add your link)
+    • Budgeting app: (add your link)
+  # Hook/format styles rotated per short so content doesn't look repetitive (YPP originality).
+  hook_formats:
+    - "bust a common money myth"
+    - "make a bold, contrarian (but true) claim"
+    - "open with a surprising statistic"
+    - "expose a common money mistake people make"
+    - "tell it as a quick 20-second story"
+    - "a 'nobody tells you this' insider angle"
+    - "ask a scroll-stopping question, then answer it"
+    - "compare two choices and reveal the smarter one"
+
+# --- Brainrot shorts (gameplay-background 9:16, no Unreal render) ------------
+brainrot:
+  aspect:        [1080, 1920]   # 9:16
+  words_per_caption: 3          # words shown at once (karaoke groups)
+  font_size:     90             # big bold captions
+  font:          "Arial"
+  primary_color: "&H00FFFFFF"   # white (ASS BGR hex)
+  outline_color: "&H00000000"   # black outline
+  highlight_color: "&H0000FFFF" # yellow for the active word
+  margin_v:      600            # vertical position from bottom (mid-ish)
+  whisper_model: "small"        # word-timestamp transcription
+  whisper_device: "auto"
+
+# --- YouTube upload (Phase 4) -----------------------------------------------
+youtube:
+  privacy_status: "private"   # DEFAULT — never auto-public (§8); --privacy overrides, public is explicit
+  category_id:    "22"        # 22 = People & Blogs, 25 = News & Politics, 27 = Education
+  made_for_kids:  false
+  client_secret:  "client_secret.json"   # Google Cloud Desktop OAuth client (git-ignored)
+  token_file:     "token.json"           # created on first auth (git-ignored)
+  default_tags:   ["shorts", "finance", "money", "investing"]
+  title_suffix:   " #Shorts"  # nudges YouTube to classify vertical <60s as a Short
