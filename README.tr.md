@@ -16,13 +16,17 @@ Tamamen **yerel** çalışan bir finans içerik hattı. İki ürün var:
 
 ## 1. Gereksinimler
 
-- **Windows**, NVIDIA GPU (bu proje **RTX 5060 / 8 GB**, Blackwell için ayarlandı)
+İki platform desteklenir:
+- **Windows** + NVIDIA GPU (bu proje **RTX 5060 / 8 GB**, Blackwell için ayarlandı) — kurulum: Bölüm 2.
+- **macOS** (Apple Silicon önerilir) — kurulum: **Bölüm 2-B**.
+
+Her iki platformda ortak:
 - **Python 3.11**
 - **Ollama** (yerel LLM) — https://ollama.com
 - **ffmpeg** (PATH'te olmalı) — https://ffmpeg.org
 
 Kontrol:
-```bat
+```bash
 python --version
 ollama --version
 ffmpeg -version
@@ -30,7 +34,7 @@ ffmpeg -version
 
 ---
 
-## 2. Kurulum (sırayı bozmayın — Blackwell/torch önemli)
+## 2. Kurulum — Windows (NVIDIA / Blackwell; sırayı bozmayın — torch önemli)
 
 `automation/` klasöründe:
 
@@ -51,6 +55,59 @@ python -c "import torch; print(torch.cuda.is_available())"
 ```
 > Adım 4 `False` derse: bir TTS paketi torch'u düşürmüştür. Şununla düzeltin:
 > `pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128`
+
+---
+
+## 2-B. Kurulum — macOS (Apple Silicon / Intel)
+
+macOS'ta **CUDA yoktur**. Shorts + Reddit hikâye hattı (Ollama + Kokoro TTS + faster-whisper
++ ffmpeg) Mac'te sorunsuz çalışır; uzun-form 16:9 görsel üretimiyle ilgili uyarılar aşağıda.
+
+**1) Homebrew ile araçlar:**
+```bash
+brew install python@3.11 ffmpeg espeak-ng
+brew install ollama            # ya da https://ollama.com uygulaması
+brew services start ollama     # Ollama'yı arka planda başlat
+```
+
+**2) Sanal ortam + bağımlılıklar** (`automation/` klasöründe):
+```bash
+# Sanal ortam (Windows'tan farkı: source ... activate)
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+
+# PyTorch — Mac'te cu128 KULLANMAYIN. Standart derleme Apple Silicon'da Metal (MPS) kullanır.
+pip install torch torchaudio
+
+# Kalan bağımlılıklar
+pip install -r requirements.txt
+
+# Doğrulama (Apple Silicon'da True olmalı; Intel Mac'te False + CPU kullanılır)
+python -c "import torch; print('MPS:', torch.backends.mps.is_available())"
+```
+
+**3) Cihaz ayarları — `config.yaml` ve `config.reddit.yaml` içinde CUDA→CPU/MPS:**
+- `tts.kokoro.device: "cpu"`  (Apple Silicon'da `"mps"` denenebilir; sorun olursa `"cpu"`)
+- `tts.chatterbox.device: "cpu"`
+- `brainrot.whisper_device: "cpu"`  (faster-whisper Mac'te CPU'da çalışır — CUDA yok)
+
+**4) LLM:** Ollama Apple Silicon'da Metal ile hızlıdır. `qwen2.5:14b` ~16 GB+ RAM ister;
+16 GB'tan az Mac'lerde birincil olarak `llama3.1:8b` kullanın (`config → llm.primary`).
+
+**⚠️ Uzun-form 16:9 korku hattı (SDXL/SVD) hakkında:**
+- Görsel üretimi (`pipeline/imagegen.py`) NVIDIA/CUDA için yazıldı — `enable_model_cpu_offload()`
+  kullanır. Mac'te çalıştırmak için bu satırı `pipe.to("mps")` ile değiştirmek gerekir; Apple
+  Silicon'da **yavaş ve bellek yoğundur**, SVD "hero-shot" hareketleri pratik olmayabilir.
+  Intel Mac'lerde önerilmez. **Shorts + Reddit hattı Mac'te tam çalışır** — uzun-form için
+  güçlü bir NVIDIA GPU (veya bulut) tavsiye edilir.
+- Yazı tipleri: kart/başlık fontları artık çok platformlu bulunuyor (macOS'ta
+  `/System/Library/Fonts/Supplemental/Arial*.ttf`). Ekstra ayar gerekmez.
+
+**5) Komutlar:** Windows `\` yerine Mac'te `/` kullanın, örn:
+`python pipeline/brainrot.py --topic "..."`  ·  `python pipeline/redditstory.py --auto --config config.reddit.yaml`
+
+---
 
 ### LLM modelleri (Ollama)
 ```bat

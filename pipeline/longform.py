@@ -125,11 +125,19 @@ def scene_prompts(config, title: str, scenes: list[str]) -> list[str]:
         return [s[:120] for s in scenes]
 
 
+_FONT_DIRS = ["C:/Windows/Fonts",                       # Windows
+              "/System/Library/Fonts/Supplemental", "/Library/Fonts", "/System/Library/Fonts",  # macOS
+              "/usr/share/fonts/truetype/dejavu", "/usr/share/fonts"]  # Linux
+
+
 def _font(size, bold=True):
-    for n in (["seguisb.ttf", "arialbd.ttf"] if bold else ["segoeui.ttf", "arial.ttf"]):
-        p = Path("C:/Windows/Fonts") / n
-        if p.exists():
-            return ImageFont.truetype(str(p), size)
+    names = (["seguisb.ttf", "arialbd.ttf", "Arial Bold.ttf", "DejaVuSans-Bold.ttf"] if bold
+             else ["segoeui.ttf", "arial.ttf", "Arial.ttf", "DejaVuSans.ttf"])
+    for d in _FONT_DIRS:
+        for n in names:
+            p = Path(d) / n
+            if p.exists():
+                return ImageFont.truetype(str(p), size)
     return ImageFont.load_default()
 
 
