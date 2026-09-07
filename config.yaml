@@ -15,9 +15,7 @@ paths:
   approved:  content/approved   # scripts cleared for voice (human moves them here)
   voice:     content/voice      # optional TTS reference sample(s) for cloning
   audio:     audio              # TTS .wav output
-  anim:      anim               # Audio2Face output (Phase 2)
-  renders:   renders            # presenter passes + plate.png (Phase 3)
-  output:    output             # finished longs / shorts (Phase 3)
+  output:    output             # finished shorts
 
 # --- Script LLM (Ollama, fully local) ---------------------------------------
 llm:
@@ -69,68 +67,6 @@ tts:
     voice:  "am_adam"         # fallback single voice
     voices: ["am_adam", "am_liam"]   # rotate through these in turns (round-robin per clip)
     speed:  1.15              # >1 = faster/more energetic delivery
-
-# --- Unreal Engine (Phase 3 — NOT USED IN PHASE 1/2) ------------------------
-# render.py (Phase 3) launches UE headless against this .uproject. The automation/
-# code deliberately lives OUTSIDE the OneDrive-synced project folder so the venv,
-# renders, and media are not sync-churned by OneDrive.
-unreal:
-  project_path: "C:/Users/dursu/OneDrive/Documents/Unreal Projects/AIPresenter/AIPresenter.uproject"
-  engine_path:  "C:/Program Files/Epic Games/UE_5.8"   # contains Engine/Binaries/Win64/UnrealEditor-Cmd.exe
-  presenter_level: "/Game/Maps/Presenter"   # the seated-presenter map — CREATE this (see docs/PHASE3_RENDER.md)
-  camera_actor: "PresenterCam"               # locked presenter camera (renamed from CineCameraActor10)
-  render_fps:   30
-  ref_performance: "/Game/NewMetaHumanPerformance"   # reused by bake.py for identity/config
-
-# --- Render (Phase 3) --------------------------------------------------------
-render:
-  transparent_bg: false       # false = render presenter IN the room (final footage; reliable).
-                              # true = presenter-only on alpha for compositing over plate
-                              # (needs UE alpha output working — see docs/PHASE3_RENDER.md).
-  resolution: [1920, 1080]    # native presenter pass resolution (upscaled to 4K after)
-  output_format: "png"        # PNG image sequence
-  warmup_frames: 32           # MRQ warm-up / engine settle
-  spatial_samples: 1          # (raster path) keep at 1 on 8 GB
-  temporal_samples: 8         # (raster path) AA accumulation
-
-  # --- Photorealism ---
-  path_tracer: false          # false = Lumen (fast, ~1-2s/frame); true = path traced (slow)
-  lumen_hardware_rt: true     # use RTX hardware ray tracing for Lumen GI/reflections (realism)
-  pt_spatial_samples: 36      # (path-tracer only) samples accumulated per frame
-  pt_spp: 64                  # (path-tracer only) r.PathTracing.SamplesPerPixel
-  pt_max_bounces: 4           # (path-tracer only) light bounces
-  # The empty furnished set is rendered ONCE to this file (python pipeline/render.py --plate)
-  plate_file: "renders/plate.png"
-
-# --- Upscale (Phase 3, AI super-resolution to 4K) ---------------------------
-upscale:
-  enabled:  true
-  target:   [3840, 2160]      # final 4K (16:9)
-  tool:     "realesrgan-ncnn-vulkan"   # Vulkan binary — no torch conflicts, runs on 8 GB
-  exe:      "tools/realesrgan/realesrgan-ncnn-vulkan.exe"   # installed under automation/tools
-  model:        "realesrgan-x4plus"    # photoreal x4 model
-  native_scale: 4             # x4plus is 4x-native; ffmpeg then downscales to exact target
-  fp32:         false         # ncnn fp16 is fine and lighter on 8 GB
-  # For very long clips, x4 intermediate frames use a lot of disk. Switch to
-  # model: realesr-animevideov3-x2 + native_scale: 2 for a lighter 2x path.
-
-# --- Composite (Phase 3, ffmpeg) --------------------------------------------
-composite:
-  background: "renders/plate.png"   # baked static office background
-  burn_captions: false              # captions are burned on shorts by default, not longs
-  video_codec: "libx264"
-  crf: 18
-  pixel_format: "yuv420p"
-
-# --- Shorts (Phase 3, ffmpeg + faster-whisper) ------------------------------
-shorts:
-  aspect: [1080, 1920]        # 9:16
-  max_duration: 60            # seconds per short
-  count: 3                    # how many shorts to try to cut from one long
-  whisper_model: "small"      # faster-whisper size: tiny|base|small|medium|large-v3
-  whisper_device: "auto"      # auto -> cuda if available else cpu
-  caption_style: "burned"     # burn captions into the 9:16 clip
-
 
 # --- Brand / persona / monetization (shapes script tone + descriptions) -----
 brand:

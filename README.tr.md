@@ -2,11 +2,12 @@
 
 Tamamen **yerel** çalışan bir finans içerik hattı. İki ürün var:
 
-- **Brainrot Shorts (hızlı, yüksek hacim):** konu → senaryo (yerel LLM) → seslendirme
+- **Finans Brainrot Shorts (hızlı):** konu → senaryo (yerel LLM) → seslendirme
   (TTS) → kelime kelime altyazı + oyun görüntüsü arka plan → 1080×1920 dikey video →
   SEO başlık/açıklama → (isteğe bağlı) YouTube'a **gizli** yükleme.
-- **MetaHuman Sunucu (premium, yavaş):** Unreal Engine 5.8 ile ağız senkronlu 3B sunucu
-  (render süresi uzun; ayrıntılar `docs/PHASE2_AUDIO2FACE.md` ve `docs/PHASE3_RENDER.md`).
+- **Reddit Hikâye Shorts:** AITA/nosleep/TIFU hikâyeleri; Reddit kartı, ruh hâli (mood),
+  çok parçalı bölme, Abone/🔔 kartı. Ayrıntılar: `docs/REDDIT_CHANNEL.md`
+  (`--config config.reddit.yaml`).
 
 > Her şey yerelde çalışır. İnternet yalnızca ilk kurulumdaki model indirmeleri ve
 > YouTube yüklemesi için gerekir.
@@ -19,7 +20,6 @@ Tamamen **yerel** çalışan bir finans içerik hattı. İki ürün var:
 - **Python 3.11**
 - **Ollama** (yerel LLM) — https://ollama.com
 - **ffmpeg** (PATH'te olmalı) — https://ffmpeg.org
-- (Opsiyonel, sadece MetaHuman için) **Unreal Engine 5.8**
 
 Kontrol:
 ```bat
@@ -57,11 +57,6 @@ python -c "import torch; print(torch.cuda.is_available())"
 ollama pull qwen2.5:14b-instruct   :: birincil
 ollama pull llama3.1:8b            :: yedek + SEO (hızlı)
 ```
-
-### Real-ESRGAN (opsiyonel — 4K büyütme için)
-`realesrgan-ncnn-vulkan`'ı indirip `automation/tools/realesrgan/` içine çıkarın:
-https://github.com/xinntao/Real-ESRGAN/releases (Windows sürümü).
-(Repoda yok; büyük binary olduğu için `.gitignore`'da.)
 
 ### Oyun görüntüleri (Shorts arka planı)
 `content/gameplay/` klasörüne **telifsiz / kullanım hakkına sahip olduğunuz** oyun

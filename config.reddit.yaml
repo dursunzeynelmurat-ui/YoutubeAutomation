@@ -1,0 +1,195 @@
+# ============================================================================
+# Reddit Stories channel profile (2nd channel). Pass with:  --config config.reddit.yaml
+# Reuses the same pipeline code as config.yaml; only the tuning differs.
+# ============================================================================
+
+paths:
+  data:      content/data
+  gameplay:  content/gameplay      # shared licensed gameplay loops
+  scripts:   content/scripts
+  approved:  content/approved
+  voice:     content/voice
+  audio:     audio
+  output:    output
+  stories:   content/stories       # selected-story records + used.txt dedupe log
+  music:     content/music         # optional royalty-free background loops (any .mp3/.wav)
+  sfx:       content/sfx           # optional sound effects: whoosh.* (title) + ding.* (CTA)
+
+llm:
+  primary:     "qwen2.5:14b-instruct"
+  fallback:    "llama3.1:8b"
+  seo_model:   "llama3.1:8b"        # fast model for SEO + story selection
+  ollama_host: "http://localhost:11434"
+  temperature: 0.8                  # a bit more creative for storytelling
+  num_ctx:     8192
+  keep_alive:  0
+  request_timeout: 600
+
+content:
+  language:     "en"
+  seo_profile:  "story"             # story-native SEO titles/tags (vs finance)
+  target_words: 900                 # (long-form; unused here)
+  story_words:  320                 # (legacy; story path no longer shortens — unused)
+  disclaimers:
+    en: >-
+      Story adapted from a public Reddit post for entertainment. Names and details may be
+      changed. Not the original poster; shared under fair-use commentary/narration.
+
+tts:
+  engine:      "kokoro"
+  sample_rate: 24000
+  kokoro:
+    device: "cuda"
+    voice:  "am_adam"
+    voices: ["am_adam", "am_liam"]  # one voice locked per story (kept across its parts)
+    speed:  0.92                    # storytime: slow + clear so every line lands (lower = slower)
+    segment_gap_ms: 180             # silence inserted between sentences (pacing/drama; 0 = off)
+  chatterbox:
+    device: "cuda"
+    voice_sample: ""
+    exaggeration: 0.5
+    cfg_weight: 0.5
+
+brand:
+  channel: "Reddit Readmore"        # <- change to your final pick
+  channel_description: >-
+    The best Reddit stories, read to you over chill gameplay. AITA, revenge, nosleep and
+    more — dramatic, bingeable, new stories daily. Story time!
+  persona: "a dramatic, engaging storyteller who reads Reddit posts like a gripping tale"
+  tone: >-
+    engaging and suspenseful, natural spoken storytelling — build tension, land the twists,
+    keep viewers hooked to the end. Clear and vivid, never a monotone read.
+  cta: "Part 2? Comment below. Follow for daily Reddit stories."
+  affiliate_block: ""
+  hook_formats:
+    - "open on the most shocking line of the story"
+    - "start with the dilemma, then rewind"
+    - "tease the twist without spoiling it"
+    - "drop the viewer straight into the drama"
+  # Spoken teaser line at the very start of Part 1 (framing only — never alters the story).
+  # The LLM writes a fresh one per video; these are fallbacks if it fails.
+  teasers:
+    - "You are not going to believe how this one ends."
+    - "This story had the whole comment section at war."
+    - "Wait for the twist on this one."
+    - "Tell me who's really in the wrong here."
+
+brainrot:
+  aspect:        [1080, 1920]
+  words_per_caption: 3
+  font_size:     84
+  font:          "Arial"
+  primary_color: "&H00FFFFFF"
+  outline_color: "&H00000000"
+  highlight_color: "&H0000FFFF"
+  margin_v:      520
+  whisper_model: "small"
+  whisper_device: "auto"
+  # Emphasis: dramatic words are enlarged + recolored + shaken for energy.
+  emphasis:        true
+  emphasis_scale:  138            # % size of an emphasized word
+  emphasis_color:  "&H0000A5FF"   # ASS BGR (orange) applied to emphasized words
+  emphasis_words:  ["screamed","scream","blood","dead","died","death","police","cops",
+                    "cheated","affair","divorce","fired","pregnant","knife","gun","body",
+                    "never","everyone","nobody","suddenly","terrified","panic","ran","run"]
+
+# --- Reddit fetch/select + story rendering ----------------------------------
+# Source = public RSS feeds (https://www.reddit.com/r/<sub>/top/.rss). No API app,
+# no client id/secret. RSS carries title/author/body but NOT score/comment counts,
+# so min_score is ignored and the post card omits vote/comment numbers.
+reddit:
+  subreddits:   ["nosleep", "AmItheAsshole", "tifu", "relationship_advice", "pettyrevenge"]
+  time:         "week"              # top of: hour|day|week|month|year|all
+  limit:        40                  # posts requested per subreddit feed
+  min_score:    500                 # (ignored: RSS has no score; /top is already popular)
+  min_chars:    600                 # skip too-short posts
+  max_chars:    9000                # skip novels
+  allow_over_18: false              # (RSS has no reliable NSFW flag; LLM selection filters SFW)
+  user_agent:   "windows:AIPresenter.RedditStories:v1.0 (by /u/yourname)"
+  request_pause: 5.0                # seconds between subreddit feeds (avoid 429 rate-limit)
+  max_seconds_per_part: 90          # split longer stories into Part 2/3/...
+  wpm:          175                 # measured Kokoro @ speed 0.92 (~175 wpm); tune if parts run long
+  card_intro_seconds: 6.0           # FALLBACK card duration if whisper title-timing fails
+  teaser:       true                # spoken curiosity hook before the title on Part 1
+  cta_seconds:  5.0                 # subscribe + bell card shown for the last N seconds
+  moderate:     true                # LLM safety check before upload (logged to sidecar)
+  moderate_allow: ["1w6isz6"]       # reddit_ids the user has manually cleared (force ok)
+  onscreen_hook: true               # big on-screen hook text for the first hook_seconds
+  hook_seconds:  2.6                # how long the on-screen hook shows
+  card_animate:  true               # slide the Reddit card in from the top
+  progress_pill: true               # "PART i/N" badge for multi-part stories
+
+# --- Mood profiles: pick gameplay/music/voice/pace by subreddit -------------
+# gameplay/music look in content/<kind>/<mood>/ first, then fall back to the flat folder.
+moods:
+  by_subreddit:
+    nosleep:             "horror"
+    AmItheAsshole:       "drama"
+    relationship_advice: "drama"
+    tifu:                "comedy"
+    pettyrevenge:        "comedy"
+  default: "drama"
+  profiles:
+    horror:
+      voice:  "am_michael"          # deeper; "" = use the rotating voices
+      speed:  0.88
+    drama:
+      voice:  ""                     # rotate am_adam/am_liam
+      speed:  0.92
+    comedy:
+      voice:  "am_liam"
+      speed:  0.98
+
+# --- Audio production (music bed + SFX + loudness) --------------------------
+# Drop loops in content/music/ and effects in content/sfx/ (whoosh.* + ding.*).
+# All optional: missing files are skipped; loudness normalization always runs.
+audio:
+  music_volume:  0.12               # background loop level under the voice
+  duck_threshold: 0.03              # sidechain duck: lower = ducks music more aggressively
+  duck_ratio:    8                  # how hard music drops when the voice speaks
+  sfx_volume:    0.5                # whoosh/ding level
+  loudness_i:    -14                # integrated loudness target (YouTube standard, LUFS)
+  loudness_tp:   -1.5               # true-peak ceiling (dBTP)
+  loudness_lra:  11                 # loudness range
+
+youtube:
+  privacy_status: "private"
+  category_id:    "24"              # 24 = Entertainment
+  made_for_kids:  false
+  client_secret:  "client_secret_reddit.json"   # 2nd channel's OAuth client (git-ignored)
+  token_file:     "token_reddit.json"            # created on first auth (git-ignored)
+  default_tags:   ["shorts", "reddit", "redditstories", "story", "storytime", "aita"]
+  title_suffix:   " #Shorts"
+  make_playlists: true              # multi-part stories -> one playlist, parts added in order
+  playlist_privacy: "public"        # playlist visibility (videos stay private until you publish)
+
+# --- Long-form 16:9 (horror/creepypasta audiobook with AI visuals) ----------
+# Full narration (NO splitting) over AI-image Ken Burns slideshow + subtitles + music.
+# Phase 1 = stills (SDXL-Turbo) + Ken Burns. Phase 2 (later) adds SVD hero-shot motion.
+longform:
+  aspect:          [1920, 1080]
+  seconds_per_scene: 20             # ~1 image per 20s of narration (image cadence)
+  voice:           "am_michael"     # deep horror narrator (overrides mood)
+  speed:           0.88
+  music_mood:      "horror"         # pulls from content/music/horror/
+  ambient_mood:    "horror"         # content/ambient/horror/ loops for intro/outro stage
+  intro_seconds:   6.0              # title/ambient intro before the story
+  grain:           true             # film-grain + vignette overlay for cohesion
+  grain_strength:  5                 # noise amount (lower = smaller file; 7 was very heavy)
+  crf:             22                # x264 quality (higher = smaller; 22 ~ half the size of 19)
+  subtitles:       true
+  # SDXL-Turbo image generation (local, VRAM-offloaded for 8 GB)
+  image_model:     "stabilityai/sdxl-turbo"
+  image_w:         1024
+  image_h:         576
+  image_steps:     4
+  image_guidance:  0.0
+  models_dir:      "models"         # HF cache lives here (git-ignored)
+  # Phase 2: sparse SVD motion accents at the tensest beats (stills stay the base).
+  hero_every_minutes: 3             # ~one motion clip per N minutes of narration
+  hero_max:        10               # hard cap on motion clips per video
+  svd_frames:      14               # 14 = faster/lighter than 25; loops to fill the hero scene
+  svd_fps:         8
+  svd_motion:      90               # motion_bucket_id (higher = more movement)
+  svd_decode_chunk: 2               # small = less VRAM on 8 GB
+  svd_model:       "stabilityai/stable-video-diffusion-img2vid-xt"

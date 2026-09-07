@@ -1,0 +1,18 @@
+# Long-form (16:9) horror/creepypasta pipeline — local image & video generation.
+# ----------------------------------------------------------------------------
+# INSTALL AFTER the base venv (torch/torchaudio must already be the cu128 build):
+#     .venv\Scripts\activate
+#     pip install -r requirements-longform.txt
+#     python -c "import torch; print(torch.cuda.is_available())"   # must still print True
+#
+# These do NOT pin torch, so they won't drag in a non-Blackwell build. If cuda goes
+# False afterward, reinstall cu128:
+#     pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+# ----------------------------------------------------------------------------
+
+diffusers>=0.31          # SDXL-Turbo stills (B) + Stable Video Diffusion hero shots (D)
+transformers>=4.44       # text encoders for the image models
+accelerate>=1.0          # model CPU-offload — essential on 8 GB VRAM
+safetensors>=0.4         # model weight format
+sentencepiece>=0.2       # tokenizer backend some encoders need
+opencv-python-headless>=4.9   # frame <-> video helpers for SVD img2vid (D)

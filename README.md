@@ -1,25 +1,24 @@
 # AI Presenter — automation pipeline
 
-Fully-local content pipeline for a finance-niche channel. **All 4 phases work.**
-Two product tracks share the same script+voice engine:
+Fully-local, gameplay-background short-form video pipeline (no GPU render). One
+script+voice+caption engine drives **two channels**:
 
-**A. Brainrot shorts (fast, high-volume — no GPU render):**
+**A. Finance brainrot shorts** ([config.yaml](config.yaml)):
 ```
 brainrot.py --topic "..."   # generate (rotating hooks) → voice (rotating am_adam/am_liam)
                             → word captions over gameplay → 1080x1920 short + SEO sidecar
 upload.py --input <clip>    # → YouTube (private by default)
 ```
-**B. MetaHuman presenter (premium, slow — headless UE render + lip-sync):**
-```
-generate.py → approve → speak.py → bake.py → render.py → composite.py → shorts.py → upload.py
-```
-Everything runs locally; the only network use is first-time model downloads and
-the YouTube upload. Per-phase details: [docs/PHASE2_AUDIO2FACE.md](docs/PHASE2_AUDIO2FACE.md),
-[docs/PHASE3_RENDER.md](docs/PHASE3_RENDER.md), [docs/PHASE4_UPLOAD.md](docs/PHASE4_UPLOAD.md).
 
-**The lip-sync path is the fiddly part — it's documented in full in
-[docs/PHASE2_AUDIO2FACE.md](docs/PHASE2_AUDIO2FACE.md)** (including the UE 5.8
-"Force Custom Mode" fix that `render.py` applies automatically).
+**B. Reddit-story shorts** ([config.reddit.yaml](config.reddit.yaml)) — narrated AITA/
+nosleep/TIFU stories with a Reddit post-card, moods, multi-part splitting, and a
+Subscribe/🔔 CTA. Full guide: [docs/REDDIT_CHANNEL.md](docs/REDDIT_CHANNEL.md).
+```
+redditstory.py --auto --count 3 --config config.reddit.yaml
+```
+
+Everything runs locally; the only network use is first-time model downloads, the
+Reddit RSS fetch, and the YouTube upload. Upload details: [docs/PHASE4_UPLOAD.md](docs/PHASE4_UPLOAD.md).
 
 ---
 
@@ -33,17 +32,8 @@ the YouTube upload. Per-phase details: [docs/PHASE2_AUDIO2FACE.md](docs/PHASE2_A
 
 ## Project layout note
 
-This `automation/` folder lives **outside** the Unreal project on purpose. The
-UE project is OneDrive-synced:
-
-- **UE project:** `C:\Users\dursu\OneDrive\Documents\Unreal Projects\AIPresenter\AIPresenter.uproject`
-- **Automation code:** `C:\Users\dursu\AIPresenter\automation\` (this folder — NOT in OneDrive)
-
-Keeping them separate stops OneDrive from syncing the multi-GB `.venv`, `renders/`,
-`output/`, and model caches. Phase 3's `render.py` reaches the project via
-`unreal.project_path` in [config.yaml](config.yaml) — the code does not need to sit
-inside the project. (Note: that project folder also contains a second
-`ArchVisRT.uproject`; the pipeline uses `AIPresenter.uproject`.)
+Code + venv: `C:\Users\dursu\AIPresenter\automation\` — kept **outside** OneDrive on
+purpose so the multi-GB `.venv/`, `output/`, and model caches aren't sync-churned.
 
 ## Install (do the steps in this order)
 
@@ -159,44 +149,29 @@ The first run of either TTS engine downloads its model weights from Hugging Face
 
 ---
 
-## Phase 2 — Facial animation (manual, in Unreal)
-
-The in-editor wiring is a **manual** job (PIPELINE.md §7). The full checklist —
-Epic MetaHuman Animator (recommended) vs. NVIDIA Audio2Face-3D — is in
-[docs/PHASE2_AUDIO2FACE.md](docs/PHASE2_AUDIO2FACE.md).
-
-The pipeline's part is the **`anim/` handoff contract**: each clip gets a sidecar
-`anim/<name>.json` naming the baked UE animation asset, managed by
-[`pipeline/anim_utils.py`](pipeline/anim_utils.py):
+## Brainrot shorts (the fast path)
 
 ```bat
-python pipeline/anim_utils.py --scaffold <name>   :: <name> = the wav stem
-:: bake the face anim in Unreal, then set "ue_asset" in anim/<name>.json
-python pipeline/anim_utils.py --check <name>       :: READY, or idle-fallback
-python pipeline/anim_utils.py --list
+:: one short from a topic (generate → voice → captions → gameplay → SEO)
+python pipeline/brainrot.py --topic "Why index funds usually beat stock picking"
+:: batch a file of topics (one per line)
+python pipeline/brainrot.py --topics topics.txt
+:: upload a finished short (private by default)
+python pipeline/upload.py --input <clip>
 ```
 
-Phase 3's `render.py` will call `anim_utils.load_animation()`; a clip with no
-baked asset degrades gracefully to the **idle presenter** (§9).
+Gameplay loops go in `content/gameplay/` (licensed / no-copyright only). Each short
+gets an SEO sidecar (`.json`/`.txt`: title, description with CTA + hashtags +
+disclaimer, tags).
 
-## Phase 3 — Render & assembly
+## Reddit-story channel
 
-Full guide: [docs/PHASE3_RENDER.md](docs/PHASE3_RENDER.md). Run order per clip:
+See **[docs/REDDIT_CHANNEL.md](docs/REDDIT_CHANNEL.md)** for the full second-channel
+guide (RSS fetch, moods, multi-part, post-card, music/SFX, playlists, scheduler,
+weekly compilation, and the private-upload queue).
 
-```bat
-python pipeline/render.py --plate            :: once: bake the background plate
-python pipeline/render.py --input <name>     :: presenter pass w/ alpha (headless UE)
-python pipeline/composite.py --input <name>  :: presenter over plate + voice -> output/longs/
-python pipeline/shorts.py --input <name>     :: captioned 9:16 shorts -> output/shorts/
-```
+## Publishing
 
-- `composite.py` (ffmpeg) and `shorts.py` (ffmpeg + faster-whisper, GPU-accelerated)
-  are **built and tested**.
-- `render.py` is built but needs a **presenter scene** you create in UE first
-  (seated MetaHuman + locked camera + alpha enabled) — see the Phase 3 doc.
-  Discover the camera name with `python pipeline/render.py --list-cameras`.
-
-## Not built yet
-
-- **Phase 4 — Publish.** `upload.py` (YouTube Data API v3, uploads **private** by
-  default). The `youtube:` block in `config.yaml` is a placeholder until then.
+`upload.py` uses the YouTube Data API v3 and uploads **private by default**
+(`--privacy public` is explicit and deliberate). One-time OAuth setup:
+[docs/PHASE4_UPLOAD.md](docs/PHASE4_UPLOAD.md).

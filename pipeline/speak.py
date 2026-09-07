@@ -155,10 +155,15 @@ def synth_kokoro(text: str, language: str, cfg: dict, sample_rate: int) -> tuple
     except TypeError:
         pipeline = KPipeline(lang_code="a")                  # older kokoro w/o device kw
 
+    # Optional pause inserted between Kokoro segments (~sentences) for pacing/drama.
+    gap_ms = int(cfg.get("segment_gap_ms", 0) or 0)
+    gap = np.zeros(int(24000 * gap_ms / 1000), dtype=np.float32) if gap_ms > 0 else None
     pieces = []
     for _, _, audio in pipeline(text, voice=voice, speed=speed):
         arr = audio.detach().cpu().numpy() if hasattr(audio, "detach") else np.asarray(audio)
-        pieces.append(arr)
+        pieces.append(np.asarray(arr, dtype=np.float32))
+        if gap is not None:
+            pieces.append(gap)
     _release(pipeline)
     if not pieces:
         sys.exit("[fatal] Kokoro produced no audio.")

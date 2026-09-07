@@ -8,27 +8,40 @@ __pycache__/
 .env
 *token*.json
 client_secret*.json
+reddit_secret.json
 credentials*.json
 
 # --- Generated media & large artifacts ---
 audio/
-anim/
-renders/
 output/
 
 # --- Downloaded gameplay footage (large; may be licensed — don't redistribute) ---
 content/gameplay/*
 !content/gameplay/README.md
 
-# --- Downloaded tools (Real-ESRGAN binary + models; re-download, don't commit) ---
-tools/
+# --- Background music (user-supplied, licensed/taste-specific — don't commit) ---
+content/music/*
+!content/music/.gitkeep
+# (content/sfx/ ding.wav + whoosh.wav ARE committed as default effects)
+
+# --- Ambient 16:9 video loops (royalty-free downloads; large — don't commit) ---
+content/ambient/*
+!content/ambient/.gitkeep
 
 # --- Generated content drafts (keep the folders, not the contents) ---
 content/scripts/*
 content/approved/*
 content/data/*
 content/voice/*
+content/stories/*
 !**/.gitkeep
+
+# --- Scheduler logs ---
+logs/*
+!logs/.gitkeep
+
+# --- Local AI model cache (SDXL-Turbo / SVD weights; re-download, don't commit) ---
+models/
 
 # --- OS cruft ---
 Thumbs.db

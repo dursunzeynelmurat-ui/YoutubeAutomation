@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -88,6 +89,16 @@ def build_ass(words, cfg, w, h) -> str:
     )
     # quick scale "pop" at the start of each word for a lively, fun feel
     pop = "{\\fscx82\\fscy82\\t(0,90,\\fscx100\\fscy100)}"
+    # Optional emphasis: dramatic words get enlarged + recolored for energy.
+    emph_on = bool(cfg.get("emphasis"))
+    eset = {re.sub(r"[^a-z0-9]", "", x.lower()) for x in cfg.get("emphasis_words", [])} if emph_on else set()
+    es = int(cfg.get("emphasis_scale", 138))
+    ecolor = _ass_color(cfg.get("emphasis_color", "&H0000A5FF"))
+
+    def _is_emph(tok: str) -> bool:
+        norm = re.sub(r"[^a-z0-9]", "", tok.lower())
+        return bool(norm) and (norm in eset or (tok.isupper() and len(norm) >= 3) or tok.endswith("!"))
+
     lines = []
     # Group words; within each group emit one event PER WORD so the active word is
     # highlighted (karaoke) while the rest of the group stays visible.
@@ -97,7 +108,12 @@ def build_ass(words, cfg, w, h) -> str:
             parts = []
             for j, (w2, _, _) in enumerate(group):
                 wt = w2.upper().replace("\n", " ")
-                parts.append(f"{{\\c{highlight}}}{wt}{{\\c{primary}}}" if j == wi else wt)
+                if emph_on and _is_emph(w2):
+                    parts.append(f"{{\\fscx{es}\\fscy{es}\\c{ecolor}}}{wt}{{\\fscx100\\fscy100\\c{primary}}}")
+                elif j == wi:
+                    parts.append(f"{{\\c{highlight}}}{wt}{{\\c{primary}}}")
+                else:
+                    parts.append(wt)
             text = pop + " ".join(parts)
             lines.append(f"Dialogue: 0,{ass_time(ws)},{ass_time(we)},BR,,0,0,0,,{text}")
     return style + "\n".join(lines) + "\n"

@@ -142,6 +142,28 @@ def build_messages(topic: str, language: str, target_words: int,
             f"- {data_section}"
         )
         user = f"Topic: {topic}\n\nWrite the short script now."
+    elif fmt == "story":
+        # Faithful narration ONLY. The LLM must not summarize, shorten, or alter the
+        # story's content — it just converts the post into clean spoken-word text.
+        # (Delivery drama comes from the TTS voice, not from rewording the content.)
+        system = (
+            f"You convert a Reddit post into clean spoken-word narration for a video, in {lang_name}. "
+            f"You are a FAITHFUL NARRATOR, not an editor or summarizer.\n\n"
+            f"ABSOLUTE RULES:\n"
+            f"- Reproduce the ENTIRE post: every event, detail, name/initial, number, quote, and "
+            f"edit/update, in the original order. Do NOT summarize, condense, shorten, skip, soften, "
+            f"reorder, or add anything of your own.\n"
+            f"- Keep the wording as close to the original as possible. You may ONLY: strip markdown/"
+            f"formatting symbols, fix obvious typos, and expand text-speak so it reads aloud naturally "
+            f"(e.g. 'AITA' -> 'Am I the asshole', 'WIBTA', 'OP', '28F' -> 'twenty-eight-year-old woman') "
+            f"— without dropping any meaning.\n"
+            f"- The narration must be essentially the SAME LENGTH as the original post. When unsure, "
+            f"keep the original text.\n"
+            f"- Output ONLY the spoken narration text — no headings, hashtags, emojis, 'Part 1' labels, "
+            f"quotation marks around the whole thing, or any commentary about the task.\n"
+        )
+        user = (f"Reddit post to narrate faithfully — reproduce it in full, do NOT shorten or change "
+                f"the content:\n{topic}\n\nWrite the full narration now.")
     else:
         system = (
             f"You are the script writer for a finance-education YouTube presenter. "
@@ -181,10 +203,15 @@ def produce_script(config: dict, topic: str, fmt: str = "long", language: str | 
     elif fmt != "short":
         log.warning("no data files in %s — script will stay conceptual (no specific figures).", ddir)
 
-    target = 80 if fmt == "short" else config["content"]["target_words"]
+    if fmt == "short":
+        target = 80
+    elif fmt == "story":
+        target = config["content"].get("story_words", 320)
+    else:
+        target = config["content"]["target_words"]
     brand = config.get("brand", {})
     hook = ""
-    if fmt == "short":
+    if fmt in ("short", "story"):
         hooks = brand.get("hook_formats") or []
         hook = rotate_pick("hook_format", list(hooks)) if hooks else ""
         if hook:
@@ -192,10 +219,17 @@ def produce_script(config: dict, topic: str, fmt: str = "long", language: str | 
     messages = build_messages(topic, language, target, data_block, data_names,
                               fmt=fmt, brand=brand, hook=hook)
     log.info("generating with '%s' (lang=%s, %s)…", model, language, fmt)
+    # Faithful story narration must not be cut off: use a low temp (no creative drift),
+    # a large context (fit the whole post + full narration), and an uncapped output.
+    if fmt == "story":
+        options = {"temperature": llm.get("story_temperature", 0.3),
+                   "num_ctx": llm.get("story_num_ctx", 12288),
+                   "num_predict": llm.get("story_num_predict", -1)}
+    else:
+        options = {"temperature": llm.get("temperature", 0.7),
+                   "num_ctx": llm.get("num_ctx", 8192)}
     payload = {"model": model, "messages": messages, "stream": False,
-               "keep_alive": llm.get("keep_alive", 0),
-               "options": {"temperature": llm.get("temperature", 0.7),
-                           "num_ctx": llm.get("num_ctx", 8192)}}
+               "keep_alive": llm.get("keep_alive", 0), "options": options}
     try:
         resp = requests.post(f"{host}/api/chat", json=payload, timeout=llm.get("request_timeout", 600))
         resp.raise_for_status()
@@ -235,25 +269,43 @@ def produce_metadata(config: dict, text: str, topic: str = "", language: str | N
     language = (language or config["content"]["language"]).lower()
     disclaimer = config["content"]["disclaimers"].get(language, "")
 
+    profile = config.get("content", {}).get("seo_profile", "finance")
+    default_tags = {"story": ["#shorts", "#reddit", "#redditstories", "#storytime"]}.get(
+        profile, ["#shorts", "#finance", "#money"])
+    default_title = "Reddit Story" if profile == "story" else "Finance Short"
+
     def _fallback():
-        t = (topic or text[:60]).strip()[:90] or "Finance Short"
+        t = (topic or text[:60]).strip()[:90] or default_title
         desc = (text.strip().split(". ")[0][:180] + ".") if text.strip() else t
         return {"title": t, "description": (desc + "\n\n" + disclaimer).strip(),
-                "tags": [], "hashtags": ["#shorts", "#finance", "#money"]}
+                "tags": [], "hashtags": default_tags}
 
     try:
         installed = check_ollama(host)
         model = pick_model(llm.get("seo_model", llm["fallback"]), llm["fallback"], installed)
         lang_name = {"en": "English", "tr": "Turkish"}.get(language, language)
-        system = (
-            f"You are a YouTube Shorts SEO expert for a finance channel. In {lang_name}, "
-            f"return ONLY a JSON object with keys title, description, hashtags, tags.\n"
-            f"- title: <=90 chars, a strong curiosity hook containing the main keyword; no false claims.\n"
-            f"- description: 2-3 natural, keyword-rich sentences.\n"
-            f"- hashtags: array of 5-8 short strings (no spaces).\n"
-            f"- tags: array of 10-15 short keyword phrases.\n"
-            f"Output JSON only — no markdown, no commentary."
-        )
+        if profile == "story":
+            system = (
+                f"You are a YouTube Shorts SEO expert for a Reddit-storytelling channel. In {lang_name}, "
+                f"return ONLY a JSON object with keys title, description, hashtags, tags.\n"
+                f"- title: <=90 chars, a strong curiosity hook that teases the drama or dilemma WITHOUT "
+                f"spoiling the ending; natural, not spammy.\n"
+                f"- description: 2-3 natural sentences that set up the story and invite viewers to give "
+                f"their verdict in the comments.\n"
+                f"- hashtags: array of 5-8 short strings like #reddit #redditstories #aita #storytime #shorts.\n"
+                f"- tags: array of 10-15 short keyword phrases (reddit stories, aita, story time, ...).\n"
+                f"Output JSON only — no markdown, no commentary."
+            )
+        else:
+            system = (
+                f"You are a YouTube Shorts SEO expert for a finance channel. In {lang_name}, "
+                f"return ONLY a JSON object with keys title, description, hashtags, tags.\n"
+                f"- title: <=90 chars, a strong curiosity hook containing the main keyword; no false claims.\n"
+                f"- description: 2-3 natural, keyword-rich sentences.\n"
+                f"- hashtags: array of 5-8 short strings (no spaces).\n"
+                f"- tags: array of 10-15 short keyword phrases.\n"
+                f"Output JSON only — no markdown, no commentary."
+            )
         payload = {"model": model, "stream": False, "keep_alive": llm.get("keep_alive", 0),
                    "format": "json",
                    "messages": [{"role": "system", "content": system},
@@ -268,11 +320,11 @@ def produce_metadata(config: dict, text: str, topic: str = "", language: str | N
         log.warning("SEO metadata generation failed (%s) — using fallback.", exc)
         return _fallback()
 
-    title = (data.get("title") or topic or "Finance Short").strip()[:100]
+    title = (data.get("title") or topic or default_title).strip()[:100]
     desc = (data.get("description") or "").strip()
     hashtags = ["#" + str(h).lstrip("#").replace(" ", "") for h in (data.get("hashtags") or [])]
     if not hashtags:
-        hashtags = ["#shorts", "#finance", "#money"]
+        hashtags = default_tags
     tags = [str(t).strip() for t in (data.get("tags") or []) if str(t).strip()]
     brand = config.get("brand", {})
     cta = brand.get("cta", "").strip()
@@ -280,6 +332,65 @@ def produce_metadata(config: dict, text: str, topic: str = "", language: str | N
     parts = [desc, cta, " ".join(hashtags), affiliate, disclaimer]
     description = "\n\n".join(p for p in parts if p).strip()
     return {"title": title, "description": description, "tags": tags, "hashtags": hashtags}
+
+
+def produce_teaser(config: dict, title: str, body: str, language: str = "en") -> str:
+    """One short spoken teaser line for the very start of a story short — framing only.
+    Must NOT reveal the ending or add story facts. Falls back to a generic line. Never raises."""
+    import random as _random
+    llm = config["llm"]; host = llm["ollama_host"]
+    brand = config.get("brand", {})
+    fallbacks = brand.get("teasers") or [
+        "You are not going to believe how this one ends.",
+        "This story had the whole comment section arguing.",
+        "Wait until you hear what happens next.",
+    ]
+    try:
+        model = pick_model(llm.get("seo_model", llm["fallback"]), llm["fallback"], check_ollama(host))
+        lang_name = {"en": "English", "tr": "Turkish"}.get(language, language)
+        system = (f"Write ONE short spoken teaser line (max 14 words) in {lang_name} to hook a viewer at "
+                  f"the start of a Reddit story video. Build curiosity about the drama. Do NOT reveal or "
+                  f"spoil the outcome and do NOT invent facts. Output ONLY the sentence, no quotes, no label.")
+        payload = {"model": model, "stream": False, "keep_alive": llm.get("keep_alive", 0),
+                   "messages": [{"role": "system", "content": system},
+                                {"role": "user", "content": f"Title: {title}\n\nStory: {body[:800]}"}],
+                   "options": {"temperature": 0.8}}
+        resp = requests.post(f"{host}/api/chat", json=payload, timeout=llm.get("request_timeout", 600))
+        resp.raise_for_status()
+        line = resp.json().get("message", {}).get("content", "").strip().splitlines()[0].strip()
+        line = re.sub(r'^["\']|["\']$', "", line).strip()
+        if 3 <= len(line.split()) <= 20:
+            return line
+    except Exception as exc:  # noqa: BLE001
+        log.warning("teaser generation failed (%s) — using fallback.", exc)
+    return _random.choice(fallbacks)
+
+
+def moderate_story(config: dict, text: str, language: str = "en") -> dict:
+    """Lightweight pre-upload safety check. Returns {"ok": bool, "reasons": [...]}.
+    Never raises — defaults to ok on any error (uploads are private + human-reviewed anyway)."""
+    import json as _json
+    import re as _re
+    llm = config["llm"]; host = llm["ollama_host"]
+    try:
+        model = pick_model(llm.get("seo_model", llm["fallback"]), llm["fallback"], check_ollama(host))
+        system = ("You are a content-safety checker for a storytelling channel. Given a narration, decide "
+                  "if it is safe to publish (no graphic sexual content, no explicit self-harm/suicide "
+                  "methods, no gore, no slurs/hate speech, no doxxing or private personal identifying "
+                  "info of real people). Mild profanity and everyday conflict are fine. "
+                  'Return ONLY JSON: {"ok": true or false, "reasons": ["..."]}.')
+        payload = {"model": model, "stream": False, "format": "json", "keep_alive": llm.get("keep_alive", 0),
+                   "messages": [{"role": "system", "content": system},
+                                {"role": "user", "content": text[:6000]}],
+                   "options": {"temperature": 0.0}}
+        resp = requests.post(f"{host}/api/chat", json=payload, timeout=llm.get("request_timeout", 600))
+        resp.raise_for_status()
+        m = _re.search(r"\{.*\}", resp.json()["message"]["content"], _re.DOTALL)
+        data = _json.loads(m.group(0)) if m else {}
+        return {"ok": bool(data.get("ok", True)), "reasons": list(data.get("reasons") or [])}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("moderation check failed (%s) — defaulting to ok.", exc)
+        return {"ok": True, "reasons": [f"check-skipped: {exc}"]}
 
 
 def generate(config: dict, args: argparse.Namespace) -> None:
