@@ -412,6 +412,18 @@ def main() -> None:
     out.with_suffix(".json").write_text(json.dumps(meta_seo, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info("DONE ✓ %s  (%.1f min, %d scenes)", out, (intro + dur) / 60, n_scenes)
 
+    # Funnel: auto-cut punchy vertical promo Shorts from the tensest beats (ffmpeg, no GPU).
+    n_promo = int(lf.get("promo_shorts", 0))
+    if n_promo > 0:
+        import promo
+        promo_idx = sorted(pick_hero_scenes(scenes, min(n_promo, len(scenes))))
+        try:
+            promos = promo.make_promos(config, out, base, title, sub, intro, dur, spans, scenes,
+                                       promo_idx, meta_seo.get("tags"))
+            log.info("promo shorts produced: %d  -> output/shorts/", len(promos))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("promo generation failed: %s", exc)
+
 
 if __name__ == "__main__":
     main()

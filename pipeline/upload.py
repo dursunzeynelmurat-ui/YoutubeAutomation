@@ -69,10 +69,18 @@ def get_service(config: dict):
     return build("youtube", "v3", credentials=creds)
 
 
-def load_meta(config: dict, name: str, args) -> dict:
+def _sidecar_for(config, name: str, video: Path | None = None) -> Path:
+    """Prefer the video's own sibling .json (long videos live in output/longform/),
+    else fall back to output/shorts/<name>.json."""
+    if video is not None and video.with_suffix(".json").exists():
+        return video.with_suffix(".json")
+    return get_path(config, "output") / "shorts" / f"{name}.json"
+
+
+def load_meta(config: dict, name: str, args, video: Path | None = None) -> dict:
     """Title/description/tags from the SEO sidecar, overridable by CLI flags."""
     meta = {}
-    sidecar = get_path(config, "output") / "shorts" / f"{name}.json"
+    sidecar = _sidecar_for(config, name, video)
     if sidecar.exists():
         meta = json.loads(sidecar.read_text(encoding="utf-8"))
     yt = config["youtube"]
@@ -155,7 +163,20 @@ def upload_one(service, config, name: str, video: Path, args, privacy: str) -> s
     """Upload one video (private/unlisted/public) + playlist/series linking. Returns video id."""
     from googleapiclient.http import MediaFileUpload
     yt = config["youtube"]
-    meta = load_meta(config, name, args)
+    meta = load_meta(config, name, args, video)
+    # Promo funnel: inject the OG long video's URL into the teaser's description.
+    sc = {}
+    scf = _sidecar_for(config, name, video)
+    if scf.exists():
+        try:
+            sc = json.loads(scf.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            sc = {}
+    if sc.get("promo_for"):
+        ogid = (_load_map(config).get("clips") or {}).get(sc["promo_for"])
+        link = f"https://youtu.be/{ogid}" if ogid else "our channel (link in pinned comment)"
+        meta["description"] = meta["description"].replace("{OG_LINK}", link)
+    meta["description"] = meta["description"].replace("{OG_LINK}", "our channel")  # safety
     body = {
         "snippet": {"title": meta["title"], "description": meta["description"],
                     "tags": meta["tags"], "categoryId": str(yt.get("category_id", "22"))},
@@ -173,10 +194,15 @@ def upload_one(service, config, name: str, video: Path, args, privacy: str) -> s
             log.info("  upload %d%%", int(status.progress() * 100))
     vid = resp.get("id")
     log.info("done ✓  https://youtu.be/%s  (privacy=%s)", vid, privacy)
-    sidecar = get_path(config, "output") / "shorts" / f"{name}.json"
-    if vid and sidecar.exists():
+    # Record clip -> video id so promos can link back to their OG long video.
+    if vid:
         try:
-            link_series_and_playlist(service, config, json.loads(sidecar.read_text(encoding="utf-8")), vid)
+            mapd = _load_map(config); mapd.setdefault("clips", {})[name] = vid; _save_map(config, mapd)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("clip-id record skipped: %s", exc)
+    if vid and sc.get("reddit_id"):      # multi-part story playlist/series linking
+        try:
+            link_series_and_playlist(service, config, sc, vid)
         except Exception as exc:  # noqa: BLE001
             log.warning("playlist/series linking skipped: %s", exc)
     return vid

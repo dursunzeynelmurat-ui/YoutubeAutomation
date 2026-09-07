@@ -188,6 +188,11 @@ longform:
   image_guidance:  0.0
   models_dir:      "models"         # HF cache lives here (git-ignored)
   # Phase 2: sparse SVD motion accents at the tensest beats (stills stay the base).
+  # Funnel: every long video auto-cuts N punchy vertical promo Shorts from its tensest
+  # beats (9:16 + hook + "WATCH FULL" card); the OG link is injected at upload time.
+  promo_shorts:    4                 # how many teaser shorts per long video (0 = off)
+  promo_seconds:   30                # length of each promo short
+  promo_cta:       "Full story on the channel"
   hero_every_minutes: 3             # ~one motion clip per N minutes of narration
   hero_max:        10               # hard cap on motion clips per video
   svd_frames:      14               # 14 = faster/lighter than 25; loops to fill the hero scene
