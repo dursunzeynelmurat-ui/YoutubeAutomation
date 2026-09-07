@@ -98,11 +98,11 @@ brainrot:
 # no client id/secret. RSS carries title/author/body but NOT score/comment counts,
 # so min_score is ignored and the post card omits vote/comment numbers.
 reddit:
-  subreddits:   ["nosleep", "AmItheAsshole", "tifu", "relationship_advice", "pettyrevenge"]
+  subreddits:   ["nosleep", "LetsNotMeet", "shortscarystories", "creepypasta", "scarystories", "thecrypticcompendium"]
   time:         "week"              # top of: hour|day|week|month|year|all
   limit:        40                  # posts requested per subreddit feed
   min_score:    500                 # (ignored: RSS has no score; /top is already popular)
-  min_chars:    600                 # skip too-short posts
+  min_chars:    400                 # lower: shortscarystories/scarystories are short by design
   max_chars:    9000                # skip novels
   allow_over_18: false              # (RSS has no reliable NSFW flag; LLM selection filters SFW)
   user_agent:   "windows:AIPresenter.RedditStories:v1.0 (by /u/yourname)"
@@ -123,12 +123,13 @@ reddit:
 # gameplay/music look in content/<kind>/<mood>/ first, then fall back to the flat folder.
 moods:
   by_subreddit:
-    nosleep:             "horror"
-    AmItheAsshole:       "drama"
-    relationship_advice: "drama"
-    tifu:                "comedy"
-    pettyrevenge:        "comedy"
-  default: "drama"
+    nosleep:              "horror"
+    LetsNotMeet:          "horror"
+    shortscarystories:    "horror"
+    creepypasta:          "horror"
+    scarystories:         "horror"
+    thecrypticcompendium: "horror"
+  default: "horror"
   profiles:
     horror:
       voice:  "am_michael"          # deeper; "" = use the rotating voices
