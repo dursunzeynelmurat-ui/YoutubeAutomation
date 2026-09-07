@@ -51,28 +51,32 @@ tts:
     cfg_weight: 0.5
 
 brand:
-  channel: "Reddit Readmore"        # <- change to your final pick
+  channel: "Scroll & Told"          # umbrella channel (all niches); horror long-form = "The Dead Hour" series
   channel_description: >-
-    The best Reddit stories, read to you over chill gameplay. AITA, revenge, nosleep and
-    more — dramatic, bingeable, new stories daily. Story time!
-  persona: "a dramatic, engaging storyteller who reads Reddit posts like a gripping tale"
+    The best stories from across Reddit, told to you. Quick Shorts every day — drama, revenge,
+    TIFU, AITA and more — plus deep-dive long-form episodes. Our horror series, THE DEAD HOUR,
+    turns the scariest posts (r/nosleep, r/creepypasta, r/LetsNotMeet) into cinematic narrated
+    nightmares. New stories daily — follow and turn on notifications.
+  # Horror long-form uses a dark cinematic narrator; other niches read naturally (the mood
+  # system + faithful narration handle tone per story).
+  persona: "an engaging storyteller who reads internet stories like a gripping tale"
   tone: >-
-    engaging and suspenseful, natural spoken storytelling — build tension, land the twists,
-    keep viewers hooked to the end. Clear and vivid, never a monotone read.
-  cta: "Part 2? Comment below. Follow for daily Reddit stories."
+    natural, vivid spoken storytelling — build tension and land the moments; for horror, slow,
+    ominous and cinematic; never monotone, never campy.
+  cta: "Follow for daily stories. Turn on notifications."
   affiliate_block: ""
   hook_formats:
-    - "open on the most shocking line of the story"
-    - "start with the dilemma, then rewind"
-    - "tease the twist without spoiling it"
-    - "drop the viewer straight into the drama"
-  # Spoken teaser line at the very start of Part 1 (framing only — never alters the story).
+    - "open on the most unsettling image in the story"
+    - "start with the moment something first felt wrong"
+    - "tease the dread without revealing what it is"
+    - "drop the viewer straight into the fear"
+  # Spoken teaser line at the very start (framing only — never alters the story).
   # The LLM writes a fresh one per video; these are fallbacks if it fails.
   teasers:
-    - "You are not going to believe how this one ends."
-    - "This story had the whole comment section at war."
-    - "Wait for the twist on this one."
-    - "Tell me who's really in the wrong here."
+    - "Some things are better left unseen."
+    - "This is why you never look back."
+    - "Keep the lights on for this one."
+    - "You won't want to be alone after this."
 
 brainrot:
   aspect:        [1080, 1920]
