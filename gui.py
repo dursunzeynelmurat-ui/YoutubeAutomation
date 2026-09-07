@@ -67,6 +67,7 @@ class Studio:
         self._tab_compile()
         self._tab_upload()
         self._tab_schedule()
+        self._tab_library()
         self._tab_folders()
 
         # log + controls
@@ -305,7 +306,10 @@ class Studio:
         ttk.Label(f, text="privacy:").grid(row=6, column=0, sticky="w", pady=6)
         self.up_priv = ttk.Combobox(f, width=12, values=["private", "unlisted", "public"]); self.up_priv.set("private")
         self.up_priv.grid(row=6, column=1, sticky="w")
-        ttk.Button(f, text="Upload", command=self._run_upload).grid(row=7, column=0, pady=10, sticky="w")
+        ttk.Label(f, text="schedule public at:").grid(row=7, column=0, sticky="w", pady=6)
+        self.up_sched = ttk.Entry(f, width=20); self.up_sched.grid(row=7, column=1, sticky="w")
+        ttk.Label(f, text="YYYY-MM-DDTHH:MM (local, optional)", foreground="#888").grid(row=7, column=2, sticky="w")
+        ttk.Button(f, text="Upload", command=self._run_upload).grid(row=8, column=0, pady=10, sticky="w")
 
     def _run_upload(self):
         m = self.up_mode.get(); cmd = self._script("upload.py")
@@ -323,6 +327,9 @@ class Studio:
         if priv == "public" and not messagebox.askyesno("PUBLIC", "Upload PUBLIC (visible to everyone)?"):
             return
         cmd += ["--privacy", priv]
+        sched = self.up_sched.get().strip()
+        if sched:
+            cmd += ["--publish-at", sched]
         self.run(cmd, f"Upload ({m})")
 
     def _tab_schedule(self):
@@ -365,6 +372,69 @@ class Studio:
                    command=lambda: _open_path(BASE / "config.reddit.yaml")).grid(row=r + 1, column=0, sticky="w", padx=6)
         ttk.Button(f, text="Edit config.yaml", width=22,
                    command=lambda: _open_path(BASE / "config.yaml")).grid(row=r + 1, column=1, sticky="w", padx=6)
+
+    def _tab_library(self):
+        f = ttk.Frame(self.nb, padding=12); self.nb.add(f, text="Library / SEO")
+        ttk.Label(f, text="List what you've made / what's pending, and (re)generate SEO.",
+                  foreground="#888").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+        ttk.Button(f, text="Long-form videos", width=18,
+                   command=lambda: self._list_dir("output/longform", "*.mp4")).grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Button(f, text="Shorts", width=18,
+                   command=lambda: self._list_dir("output/shorts", "*.mp4")).grid(row=1, column=1, sticky="w")
+        ttk.Button(f, text="Compilations", width=18,
+                   command=lambda: self._list_dir("output/compilations", "*.mp4")).grid(row=1, column=2, sticky="w")
+        ttk.Button(f, text="Upload queue", width=18,
+                   command=lambda: self._show_file("output/upload_queue.txt")).grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Button(f, text="Used stories", width=18,
+                   command=lambda: self._show_file("content/stories/used.txt")).grid(row=2, column=1, sticky="w")
+        ttk.Button(f, text="Scheduled task", width=18, command=self._show_task).grid(row=2, column=2, sticky="w")
+        ttk.Separator(f, orient="horizontal").grid(row=3, column=0, columnspan=4, sticky="ew", pady=10)
+        ttk.Label(f, text="Generate title & description for a clip:").grid(row=4, column=0, columnspan=3, sticky="w")
+        self.seo_clip = ttk.Combobox(f, width=50, values=self._all_clips()); self.seo_clip.grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(f, text="↻", width=3, command=lambda: self.seo_clip.configure(values=self._all_clips())).grid(row=5, column=2)
+        ttk.Button(f, text="Generate SEO", command=self._run_seo).grid(row=6, column=0, sticky="w", pady=6)
+        ttk.Label(f, text="or a topic:").grid(row=7, column=0, sticky="w")
+        self.seo_topic = ttk.Entry(f, width=50); self.seo_topic.grid(row=7, column=1, sticky="w")
+        ttk.Button(f, text="SEO from topic", command=self._run_seo_topic).grid(row=8, column=0, sticky="w", pady=4)
+
+    def _all_clips(self):
+        out = []
+        for sub in ("longform", "shorts"):
+            d = BASE / "output" / sub
+            if d.exists():
+                out += sorted(p.stem for p in d.glob("*.mp4"))
+        return out
+
+    def _list_dir(self, rel, pattern):
+        d = BASE / rel
+        files = sorted(d.glob(pattern)) if d.exists() else []
+        self._log(f"\n── {rel} ({len(files)} file[s]) ──\n")
+        for p in files:
+            self._log(f"  {p.name}  ({p.stat().st_size // 1048576} MB)\n")
+        if not files:
+            self._log("  (none)\n")
+
+    def _show_file(self, rel):
+        p = BASE / rel
+        self._log(f"\n── {rel} ──\n")
+        self._log((p.read_text(encoding="utf-8") if p.exists() else "(not found)") + "\n")
+
+    def _show_task(self):
+        if not IS_WIN:
+            self._log("\n(Scheduled tasks are Windows-only.)\n"); return
+        self.run(["schtasks", "/Query", "/TN", "ScrollAndTold", "/V", "/FO", "LIST"], "Query scheduled task")
+
+    def _run_seo(self):
+        clip = self.seo_clip.get().strip()
+        if not clip:
+            return messagebox.showwarning("SEO", "Pick a clip.")
+        self.run(self._script("seo.py", "--input", clip), "Generate SEO")
+
+    def _run_seo_topic(self):
+        t = self.seo_topic.get().strip()
+        if not t:
+            return messagebox.showwarning("SEO", "Enter a topic.")
+        self.run(self._script("seo.py", "--topic", t), "SEO from topic")
 
     # ---- helpers ----------------------------------------------------------
     def _browse(self, entry):

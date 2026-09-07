@@ -159,6 +159,13 @@ def link_series_and_playlist(service, config, meta: dict, video_id: str):
     _save_map(config, mapd)
 
 
+def _to_rfc3339(local_str: str) -> str:
+    """'YYYY-MM-DDTHH:MM' (or with space) in LOCAL time -> RFC3339 UTC 'Z' for publishAt."""
+    from datetime import datetime, timezone
+    dt = datetime.fromisoformat(local_str.strip().replace(" ", "T"))   # naive local
+    return dt.astimezone().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def upload_one(service, config, name: str, video: Path, args, privacy: str) -> str | None:
     """Upload one video (private/unlisted/public) + playlist/series linking. Returns video id."""
     from googleapiclient.http import MediaFileUpload
@@ -177,13 +184,22 @@ def upload_one(service, config, name: str, video: Path, args, privacy: str) -> s
         link = f"https://youtu.be/{ogid}" if ogid else "our channel (link in pinned comment)"
         meta["description"] = meta["description"].replace("{OG_LINK}", link)
     meta["description"] = meta["description"].replace("{OG_LINK}", "our channel")  # safety
+    status = {"privacyStatus": privacy, "selfDeclaredMadeForKids": bool(yt.get("made_for_kids", False))}
+    pa = getattr(args, "publish_at", None)
+    if pa:
+        try:
+            iso = _to_rfc3339(pa)
+            status["privacyStatus"] = "private"          # YouTube requires private + publishAt
+            status["publishAt"] = iso
+            log.info("  scheduled to go PUBLIC at %s (UTC)", iso)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("  bad --publish-at (%s) — uploading without a schedule", exc)
     body = {
         "snippet": {"title": meta["title"], "description": meta["description"],
                     "tags": meta["tags"], "categoryId": str(yt.get("category_id", "22"))},
-        "status": {"privacyStatus": privacy,
-                   "selfDeclaredMadeForKids": bool(yt.get("made_for_kids", False))},
+        "status": status,
     }
-    log.info("uploading %s  (privacy=%s)", video.name, privacy)
+    log.info("uploading %s  (privacy=%s)", video.name, status["privacyStatus"])
     log.info("  title: %s", meta["title"])
     media = MediaFileUpload(str(video), chunksize=-1, resumable=True, mimetype="video/*")
     request = service.videos().insert(part="snippet,status", body=body, media_body=media)
@@ -225,6 +241,8 @@ def main() -> None:
     ap.add_argument("--queue-file", help="override queue path (default output/upload_queue.txt)")
     ap.add_argument("--privacy", choices=["private", "unlisted", "public"],
                     help="visibility (default from config = private). 'public' is explicit & deliberate.")
+    ap.add_argument("--publish-at", help="schedule public release: 'YYYY-MM-DDTHH:MM' local time "
+                                         "(uploads private now, YouTube flips it public then)")
     ap.add_argument("--title", help="override title")
     ap.add_argument("--description", help="override description")
     ap.add_argument("--config", help="path to config.yaml")
