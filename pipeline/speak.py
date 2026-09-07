@@ -40,8 +40,39 @@ log = setup_logging()
 # --------------------------------------------------------------------------- #
 # Text preparation                                                            #
 # --------------------------------------------------------------------------- #
+_ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+         "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
+         "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty"]
+
+
+def _num_words(n: int) -> str:
+    if n < 20:
+        return _ONES[n]
+    t, o = divmod(n, 10)
+    return _TENS[t] + (f"-{_ONES[o]}" if o else "")
+
+
+def _speak_times(text: str) -> str:
+    """Say clock times as words: 3:07 -> 'three oh seven', 9:00 -> 'nine o'clock',
+    11:45 -> 'eleven forty-five', 3AM -> 'three A M'. TTS otherwise mangles digits/colons."""
+    def hm(m):
+        h, mm = int(m.group(1)), int(m.group(2))
+        if h > 23 or mm > 59:
+            return m.group(0)
+        hw = _num_words(h)
+        if mm == 0:
+            return f"{hw} o'clock"
+        return f"{hw} oh {_num_words(mm)}" if mm < 10 else f"{hw} {_num_words(mm)}"
+    text = re.sub(r"\b([0-2]?\d):([0-5]\d)\b", hm, text)
+    # bare hour + am/pm (3AM, 11 p.m.) -> 'three A M'
+    text = re.sub(r"\b([0-2]?\d)\s*([APap])\.?\s*[Mm]\.?\b",
+                  lambda m: f"{_num_words(int(m.group(1)))} {m.group(2).upper()} M", text)
+    return text
+
+
 def clean_for_tts(raw: str) -> str:
-    """Strip markdown / frontmatter so only spoken words remain.
+    """Strip markdown / frontmatter so only spoken words remain, and normalize clock times.
 
     The disclaimer (plain text at the top) is intentionally KEPT and spoken.
     """
@@ -50,6 +81,7 @@ def clean_for_tts(raw: str) -> str:
     text = "\n".join(lines)
     text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)       # headings
     text = re.sub(r"[*_`>]", "", text)                              # md emphasis/quotes
+    text = _speak_times(text)                                        # 3:07 -> "three oh seven"
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

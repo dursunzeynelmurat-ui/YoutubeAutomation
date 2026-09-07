@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 import requests
 import soundfile as sf
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 import brainrot as br
 import generate as gen
@@ -141,22 +141,41 @@ def _font(size, bold=True):
     return ImageFont.load_default()
 
 
-def render_title_card(title: str, subreddit: str, out: Path, w: int, h: int) -> Path:
+def _draw_tracked(d, text, font, cx, y, fill, track=0):
+    """Centered text with letter-spacing (tracking) for a cinematic kicker."""
+    widths = [d.textlength(ch, font=font) for ch in text]
+    x = cx - (sum(widths) + track * (len(text) - 1)) / 2
+    for ch, wch in zip(text, widths):
+        d.text((x, y), ch, font=font, fill=fill)
+        x += wch + track
+
+
+def render_title_card(title: str, subreddit: str, out: Path, w: int, h: int, bg: Path | None = None) -> Path:
+    """Cinematic title over a darkened, blurred first-scene image (not a flat slide):
+    tracked kicker + accent rule + soft-shadow title."""
     import textwrap
-    img = Image.new("RGB", (w, h), (8, 8, 10))
-    d = ImageDraw.Draw(img)
-    d.rectangle([0, 0, w, h], fill=(8, 8, 10))
-    f = _font(74, bold=True); fs = _font(34, bold=False)
-    probe = d.textlength("m", font=f) or 40
-    lines = textwrap.wrap(title, width=max(12, int(w * 0.8 / probe))) or [""]
-    total = len(lines) * (f.size + 18)
-    y = (h - total) // 2
+    if bg and Path(bg).exists():
+        base = Image.open(bg).convert("RGB").resize((w, h)).filter(ImageFilter.GaussianBlur(22))
+        base = Image.blend(base, Image.new("RGB", (w, h), (0, 0, 0)), 0.66)   # darken for legibility
+    else:
+        base = Image.new("RGB", (w, h), (8, 8, 10))
+    d = ImageDraw.Draw(base)
+    tf = _font(88, bold=True); kf = _font(26, bold=True)
+    cx = w // 2
+    ky = int(h * 0.30)
+    _draw_tracked(d, f"R/{subreddit.upper()}", kf, cx, ky, (198, 198, 204), track=8)
+    d.line([(cx - 150, ky + 46), (cx + 150, ky + 46)], fill=(140, 140, 146), width=2)
+    probe = d.textlength("m", font=tf) or 44
+    lines = textwrap.wrap(title, width=max(14, int(w * 0.78 / probe))) or [""]
+    lh = tf.size + 16
+    y = int(h * 0.42)
     for ln in lines:
-        d.text((w / 2, y), ln, font=f, fill=(226, 226, 230), anchor="ma")
-        y += f.size + 18
-    d.text((w / 2, y + 24), f"r/{subreddit}", font=fs, fill=(255, 80, 30), anchor="ma")
+        for dx, dy in ((-2, 3), (2, 3), (0, 4)):
+            d.text((cx + dx, y + dy), ln, font=tf, fill=(0, 0, 0), anchor="ma")   # soft shadow
+        d.text((cx, y), ln, font=tf, fill=(238, 238, 242), anchor="ma")
+        y += lh
     out.parent.mkdir(parents=True, exist_ok=True)
-    img.save(out)
+    base.save(out)
     return out
 
 
@@ -318,11 +337,17 @@ def main() -> None:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("hero animate failed for scene %d (%s) — using still.", i, exc)
 
-        # 2) title-card intro + per-scene clips (motion for hero scenes, Ken Burns otherwise)
-        intro = float(lf.get("intro_seconds", 6.0))
+        # 2) optional cinematic title-card intro + per-scene clips (motion for hero scenes)
         clips = []
-        tcard = render_title_card(title, sub, tmp / "title.png", w, h)
-        tclip = tmp / "clip_000.mp4"; ken_burns_clip(tcard, intro, tclip, w, h, zoom_in=True); clips.append(tclip)
+        if lf.get("title_card", True):
+            intro = float(lf.get("intro_seconds", 6.0))
+            tcard = render_title_card(title, sub, tmp / "title.png", w, h,
+                                      bg=(imgs[0] if imgs else None))
+            tclip = tmp / "clip_000.mp4"
+            ken_burns_clip(tcard, intro, tclip, w, h, zoom_in=True)
+            clips.append(tclip)
+        else:
+            intro = 0.0        # no title card -> narration/scenes start at t=0
         for i, (img, (s0, s1)) in enumerate(zip(imgs, spans), 1):
             d = max(0.8, s1 - s0)
             cp = tmp / f"clip_{i:03d}.mp4"
