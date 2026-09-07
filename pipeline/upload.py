@@ -215,11 +215,13 @@ def _remove_from_queue(qf: Path, name: str):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Upload a video to YouTube (private by default).")
-    g = ap.add_mutually_exclusive_group(required=True)
+    g = ap.add_mutually_exclusive_group(required=False)
     g.add_argument("--input", help="clip base name (uploads output/shorts/<name>.mp4 + sidecar)")
     g.add_argument("--file", help="explicit video file path")
     g.add_argument("--queue", action="store_true",
                    help="upload every clip listed in output/upload_queue.txt, in order (resumable)")
+    ap.add_argument("--auth-only", action="store_true",
+                    help="just authorize (opens browser once) and print the connected channel; no upload")
     ap.add_argument("--queue-file", help="override queue path (default output/upload_queue.txt)")
     ap.add_argument("--privacy", choices=["private", "unlisted", "public"],
                     help="visibility (default from config = private). 'public' is explicit & deliberate.")
@@ -230,10 +232,24 @@ def main() -> None:
 
     config = load_config(args.config)
     yt = config["youtube"]
+    if not (args.auth_only or args.input or args.file or args.queue):
+        ap.error("one of --input / --file / --queue (or --auth-only) is required")
     privacy = args.privacy or yt.get("privacy_status", "private")
     if privacy == "public":
         log.warning("PUBLIC upload requested explicitly — this will be visible to everyone.")
     service = get_service(config)
+
+    if args.auth_only:
+        try:
+            items = service.channels().list(part="snippet", mine=True).execute().get("items", [])
+            if items:
+                log.info("Authorized ✓  connected channel: %s  (id %s)",
+                         items[0]["snippet"]["title"], items[0]["id"])
+            else:
+                log.info("Authorized ✓  but no YouTube channel found on this account.")
+        except Exception as exc:  # noqa: BLE001
+            log.error("auth check failed: %s", exc)
+        return
 
     if args.queue:
         qf = resolve(args.queue_file) if args.queue_file else get_path(config, "output") / "upload_queue.txt"
