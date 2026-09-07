@@ -103,7 +103,9 @@ brainrot:
 # so min_score is ignored and the post card omits vote/comment numbers.
 reddit:
   subreddits:   ["nosleep", "LetsNotMeet", "shortscarystories", "creepypasta", "scarystories", "thecrypticcompendium"]
-  time:         "week"              # top of: hour|day|week|month|year|all
+  sort:         "top"               # top | rising | hot | new  (rising = catch stories before they peak)
+  time:         "week"              # top of: hour|day|week|month|year|all  (used when sort=top)
+  cache_minutes: 30                 # reuse a subreddit feed from .state/rss_cache/ within N min (dodges 429)
   limit:        40                  # posts requested per subreddit feed
   min_score:    500                 # (ignored: RSS has no score; /top is already popular)
   min_chars:    400                 # lower: shortscarystories/scarystories are short by design
@@ -178,6 +180,8 @@ longform:
   speed:           0.88
   music_mood:      "horror"         # pulls from content/music/horror/
   ambient_mood:    "horror"         # content/ambient/horror/ loops for intro/outro stage
+  thumbnail:       true             # auto-generate a 1280x720 thumbnail (frame + bold title) per long video
+  chapters:        true             # add YouTube chapters (0:00 + LLM-titled beats) to the description
   title_card:      true             # cinematic title over blurred first scene (false = no intro card)
   intro_seconds:   6.0              # title/ambient intro before the story
   grain:           true             # film-grain + vignette overlay for cohesion

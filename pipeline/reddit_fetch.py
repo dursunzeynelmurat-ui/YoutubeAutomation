@@ -27,24 +27,46 @@ from pathlib import Path
 
 import requests
 
-from _common import get_path, load_config, setup_logging
+from _common import get_path, load_config, resolve, setup_logging
 
 log = setup_logging()
 
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
 
-def _used_ids(config) -> set:
+def _used_rows(config) -> list[tuple[str, str]]:
+    """used.txt rows: 'id' or 'id\\ttitle' (title added since the dedupe upgrade)."""
     f = get_path(config, "stories") / "used.txt"
+    rows = []
     if f.exists():
-        return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()}
-    return set()
+        for ln in f.read_text(encoding="utf-8").splitlines():
+            ln = ln.strip()
+            if ln:
+                parts = ln.split("\t", 1)
+                rows.append((parts[0], parts[1] if len(parts) > 1 else ""))
+    return rows
 
 
-def mark_used(config, post_id: str):
+def _used_ids(config) -> set:
+    return {i for i, _ in _used_rows(config)}
+
+
+def _norm_title(t: str) -> str:
+    return re.sub(r"[^a-z0-9 ]", "", (t or "").lower()).strip()
+
+
+def _is_near_dup(title: str, used_titles: list[str], thresh: float = 0.82) -> bool:
+    import difflib
+    n = _norm_title(title)
+    if not n:
+        return False
+    return any(difflib.SequenceMatcher(None, n, u).ratio() >= thresh for u in used_titles if u)
+
+
+def mark_used(config, post_id: str, title: str = ""):
     d = get_path(config, "stories"); d.mkdir(parents=True, exist_ok=True)
     with open(d / "used.txt", "a", encoding="utf-8") as fh:
-        fh.write(post_id + "\n")
+        fh.write(f"{post_id}\t{_norm_title(title)}\n" if title else f"{post_id}\n")
 
 
 def _extract_selftext(content_html: str) -> str:
@@ -95,14 +117,15 @@ def _parse_feed(xml_text: str, sub: str) -> list[dict]:
     return posts
 
 
-def _get_feed(url: str, ua: dict, retries: int = 4) -> str:
-    """GET an RSS feed, backing off on Reddit's 429 rate-limiting."""
+def _get_feed(url: str, ua: dict, retries: int = 5) -> str:
+    """GET an RSS feed, backing off (with jitter) on Reddit's 429 rate-limiting."""
+    import random
     delay = 3.0
     for attempt in range(retries):
         resp = requests.get(url, headers=ua, timeout=20)
         if resp.status_code == 429:
-            wait = float(resp.headers.get("retry-after", delay))
-            log.info("rate-limited (429); waiting %.0fs then retrying...", wait)
+            wait = float(resp.headers.get("retry-after", delay)) + random.uniform(0, 2.5)
+            log.info("rate-limited (429); waiting %.1fs then retrying...", wait)
             time.sleep(wait)
             delay *= 2
             continue
@@ -112,32 +135,58 @@ def _get_feed(url: str, ua: dict, retries: int = 4) -> str:
     return resp.text
 
 
+def _cached_feed(config, sub: str, url: str, ua: dict) -> str:
+    """Serve a subreddit feed from a short-lived on-disk cache to dodge 429s on re-runs."""
+    ttl = float(config["reddit"].get("cache_minutes", 30)) * 60
+    cdir = resolve(".state") / "rss_cache"
+    cdir.mkdir(parents=True, exist_ok=True)
+    cf = cdir / f"{sub}.xml"
+    if ttl > 0 and cf.exists() and (time.time() - cf.stat().st_mtime) < ttl:
+        log.info("using cached feed for r/%s (< %.0f min old)", sub, ttl / 60)
+        return cf.read_text(encoding="utf-8")
+    text = _get_feed(url, ua)
+    try:
+        cf.write_text(text, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return text
+
+
 def fetch_candidates(config) -> list[dict]:
     r = config["reddit"]
     ua = {"User-Agent": r.get("user_agent", "AIPresenter/1.0 by u/yourname"),
           "Accept": "application/atom+xml, application/xml, text/xml"}
     pause = float(r.get("request_pause", 2.5))   # be polite between subreddits
+    sort = r.get("sort", "top")                  # top | rising | hot | new
     used = _used_ids(config)
-    out = []
+    used_titles = [t for _, t in _used_rows(config) if t]
+    out, dropped_dup = [], 0
     for idx, sub in enumerate(r["subreddits"]):
         if idx > 0:
             time.sleep(pause)
-        url = (f"https://www.reddit.com/r/{sub}/top/.rss"
-               f"?t={r.get('time','week')}&limit={r.get('limit',40)}")
+        if sort == "rising":
+            url = f"https://www.reddit.com/r/{sub}/rising/.rss?limit={r.get('limit',40)}"
+        elif sort in ("hot", "new"):
+            url = f"https://www.reddit.com/r/{sub}/{sort}/.rss?limit={r.get('limit',40)}"
+        else:
+            url = f"https://www.reddit.com/r/{sub}/top/.rss?t={r.get('time','week')}&limit={r.get('limit',40)}"
         try:
-            children = _parse_feed(_get_feed(url, ua), sub)
+            children = _parse_feed(_cached_feed(config, sub, url, ua), sub)
         except Exception as exc:  # noqa: BLE001
             log.warning("fetch failed for r/%s: %s", sub, exc)
             continue
         for d in children:
             body = d["selftext"]
-            # RSS gives no score/over_18/stickied flags; rely on the /top feed being
-            # already popular + the LLM SFW selection. Only length + dedupe filter here.
             if (not body or d["id"] in used
                     or not (r.get("min_chars", 0) <= len(body) <= r.get("max_chars", 99999))):
                 continue
+            if _is_near_dup(d["title"], used_titles):    # skip re-telling the same story
+                dropped_dup += 1
+                continue
             out.append(d)
-    log.info("fetched %d usable candidates from %d subreddits (RSS)", len(out), len(r["subreddits"]))
+    log.info("fetched %d usable candidates from %d subreddits (RSS, sort=%s%s)",
+             len(out), len(r["subreddits"]), sort,
+             f", {dropped_dup} near-dup skipped" if dropped_dup else "")
     return out
 
 

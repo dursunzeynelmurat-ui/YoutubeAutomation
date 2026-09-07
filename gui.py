@@ -16,6 +16,7 @@ import queue
 import subprocess
 import sys
 import threading
+from collections import deque
 from pathlib import Path
 
 import tkinter as tk
@@ -43,6 +44,7 @@ class Studio:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.proc: subprocess.Popen | None = None
+        self.jobs: deque = deque()
         self.q: queue.Queue = queue.Queue()
         root.title("Scroll & Told — Studio")
         root.geometry("1040x760")
@@ -68,12 +70,14 @@ class Studio:
         self._tab_upload()
         self._tab_schedule()
         self._tab_library()
+        self._tab_doctor()
         self._tab_folders()
 
         # log + controls
         bottom = ttk.Frame(root, padding=(10, 6)); bottom.pack(fill="both", expand=False)
         bar = ttk.Frame(bottom); bar.pack(fill="x")
         self.status = ttk.Label(bar, text="Idle", foreground="#2a7"); self.status.pack(side="left")
+        self.prog = ttk.Progressbar(bar, mode="indeterminate", length=160); self.prog.pack(side="left", padx=12)
         ttk.Button(bar, text="Stop", command=self.stop).pack(side="right")
         ttk.Button(bar, text="Clear log", command=self._clear).pack(side="right", padx=6)
         self.log = tk.Text(bottom, height=15, bg="#0f0f12", fg="#d8d8dc", insertbackground="#d8d8dc",
@@ -88,19 +92,37 @@ class Studio:
         return [PY, str(BASE / "pipeline" / name), *args, "--config", self.config_var.get()]
 
     def run(self, cmd, label):
-        if self.proc is not None:
-            messagebox.showinfo("Busy", "A job is already running — Stop it first."); return
+        """Queue a job; it starts immediately if idle, else runs after the current ones."""
+        self.jobs.append((cmd, label))
+        if len(self.jobs) > 1 or self.proc is not None:
+            self._log(f"[queued: {label}  ({len(self.jobs)} waiting)]\n")
+        self._pump()
+
+    def _pump(self):
+        if self.proc is not None or not self.jobs:
+            return
+        cmd, label = self.jobs.popleft()
         self._log(f"\n{'='*70}\n▶ {label}\n$ {' '.join(str(c) for c in cmd)}\n{'='*70}\n")
         self.status.configure(text=f"Running: {label}", foreground="#e0a13a")
+        try:
+            self.prog.start(12)
+        except Exception:  # noqa: BLE001
+            pass
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"; env["HF_HUB_DISABLE_TELEMETRY"] = "1"
         try:
             self.proc = subprocess.Popen(cmd, cwd=str(BASE), stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
         except Exception as exc:  # noqa: BLE001
-            self._log(f"[failed to start: {exc}]\n"); self.status.configure(text="Idle", foreground="#2a7")
-            self.proc = None; return
+            self._log(f"[failed to start: {exc}]\n"); self.proc = None; self._idle(); self._pump(); return
         threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
+
+    def _idle(self):
+        self.status.configure(text="Idle" if not self.jobs else f"{len(self.jobs)} queued", foreground="#2a7")
+        try:
+            self.prog.stop()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _reader(self, proc):
         for line in iter(proc.stdout.readline, ""):
@@ -115,7 +137,12 @@ class Studio:
                 if isinstance(item, tuple) and item[0] == "__DONE__":
                     self._log(f"\n[finished · exit {item[1]}]\n")
                     self.proc = None
-                    self.status.configure(text="Idle", foreground="#2a7")
+                    self._idle()
+                    try:
+                        self.root.bell()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._pump()          # start the next queued job, if any
                 else:
                     self._log(item)
         except queue.Empty:
@@ -123,6 +150,8 @@ class Studio:
         self.root.after(120, self._poll)
 
     def stop(self):
+        if self.jobs:
+            self._log(f"\n[cleared {len(self.jobs)} queued job(s)]\n"); self.jobs.clear()
         if self.proc is not None:
             try:
                 self.proc.terminate(); self._log("\n[stop requested]\n")
@@ -343,7 +372,14 @@ class Studio:
         self.sc_count.grid(row=1, column=3, sticky="w")
         ttk.Button(f, text="Register daily task", command=self._sched_create).grid(row=2, column=0, pady=10, sticky="w")
         ttk.Button(f, text="Remove task", command=self._sched_delete).grid(row=2, column=1, sticky="w")
-        ttk.Button(f, text="Run now", command=lambda: self.run([str(BASE / "run_daily.bat"), str(self.sc_count.get())], "Run daily now")).grid(row=2, column=2, sticky="w")
+        ttk.Separator(f, orient="horizontal").grid(row=3, column=0, columnspan=4, sticky="ew", pady=8)
+        ttk.Label(f, text="One-click Daily Run (queued back-to-back):", foreground="#888").grid(row=4, column=0, columnspan=3, sticky="w")
+        ttk.Button(f, text="▶ Full daily now (1 long-form + promos, then 2 shorts)",
+                   command=self._run_daily_full).grid(row=5, column=0, columnspan=3, pady=8, sticky="w")
+
+    def _run_daily_full(self):
+        self.run(self._script("longform.py", "--auto"), "Daily: long-form (+promos+thumb)")
+        self.run(self._script("redditstory.py", "--auto", "--count", "2"), "Daily: 2 reddit shorts")
 
     def _sched_create(self):
         if not IS_WIN:
@@ -360,9 +396,9 @@ class Studio:
     def _tab_folders(self):
         f = ttk.Frame(self.nb, padding=12); self.nb.add(f, text="Folders / Config")
         items = [("Long-form output", "output/longform"), ("Shorts output", "output/shorts"),
-                 ("Compilations", "output/compilations"), ("Gameplay", "content/gameplay"),
-                 ("Music", "content/music"), ("SFX", "content/sfx"), ("Ambient", "content/ambient"),
-                 ("Stories", "content/stories")]
+                 ("Compilations", "output/compilations"), ("Thumbnails", "output/thumbnails"),
+                 ("Gameplay", "content/gameplay"), ("Music", "content/music"),
+                 ("SFX", "content/sfx"), ("Ambient", "content/ambient"), ("Stories", "content/stories")]
         for i, (label, rel) in enumerate(items):
             ttk.Button(f, text=label, width=22, command=lambda r=rel: _open_path(BASE / r)).grid(
                 row=i // 2, column=i % 2, sticky="w", padx=6, pady=4)
@@ -393,6 +429,7 @@ class Studio:
         self.seo_clip = ttk.Combobox(f, width=50, values=self._all_clips()); self.seo_clip.grid(row=5, column=0, columnspan=2, sticky="w", pady=4)
         ttk.Button(f, text="↻", width=3, command=lambda: self.seo_clip.configure(values=self._all_clips())).grid(row=5, column=2)
         ttk.Button(f, text="Generate SEO", command=self._run_seo).grid(row=6, column=0, sticky="w", pady=6)
+        ttk.Button(f, text="Generate thumbnail", command=self._run_thumb).grid(row=6, column=1, sticky="w")
         ttk.Label(f, text="or a topic:").grid(row=7, column=0, sticky="w")
         self.seo_topic = ttk.Entry(f, width=50); self.seo_topic.grid(row=7, column=1, sticky="w")
         ttk.Button(f, text="SEO from topic", command=self._run_seo_topic).grid(row=8, column=0, sticky="w", pady=4)
@@ -435,6 +472,20 @@ class Studio:
         if not t:
             return messagebox.showwarning("SEO", "Enter a topic.")
         self.run(self._script("seo.py", "--topic", t), "SEO from topic")
+
+    def _run_thumb(self):
+        clip = self.seo_clip.get().strip()
+        if not clip:
+            return messagebox.showwarning("Thumbnail", "Pick a clip.")
+        self.run(self._script("thumb.py", "--input", clip), "Generate thumbnail")
+
+    def _tab_doctor(self):
+        f = ttk.Frame(self.nb, padding=12); self.nb.add(f, text="Doctor")
+        ttk.Label(f, text="Check that everything's wired: torch/CUDA, ffmpeg, Ollama + models, "
+                          "image/video model cache, YouTube secret/token, assets, disk.",
+                  foreground="#888").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Button(f, text="Run system check", command=lambda: self.run(
+            self._script("doctor.py"), "System check")).grid(row=1, column=0, sticky="w")
 
     # ---- helpers ----------------------------------------------------------
     def _browse(self, entry):

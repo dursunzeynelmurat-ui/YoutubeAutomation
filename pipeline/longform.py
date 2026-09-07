@@ -130,6 +130,46 @@ _FONT_DIRS = ["C:/Windows/Fonts",                       # Windows
               "/usr/share/fonts/truetype/dejavu", "/usr/share/fonts"]  # Linux
 
 
+def _fmt_ts(sec: float) -> str:
+    sec = int(sec); return f"{sec // 60}:{sec % 60:02d}"
+
+
+def build_chapters(config, title: str, scenes: list, spans: list, intro: float, k: int = 5) -> str:
+    """YouTube chapters: '0:00 Intro' + ~k LLM-titled beats. '' if the story is too short."""
+    if len(scenes) < 3:
+        return ""
+    idxs = sorted({int(round(j * (len(scenes) - 1) / (k + 1))) for j in range(1, k + 1)})
+    idxs = [i for i in idxs if 0 < i < len(scenes)]
+    if not idxs:
+        return ""
+    llm = config["llm"]
+    listing = "\n".join(f"[{j}] {scenes[i][:200]}" for j, i in enumerate(idxs))
+    system = ("Write ONE short chapter title (2-4 words, present tense, NO spoilers) for each numbered "
+              f'excerpt of a horror story. Return ONLY JSON {{"titles":[...]}} with {len(idxs)} strings.')
+    titles = []
+    try:
+        r = requests.post(f"{llm['ollama_host']}/api/chat", timeout=llm.get("request_timeout", 600),
+                          json={"model": llm.get("seo_model", llm["fallback"]), "stream": False,
+                                "format": "json", "keep_alive": llm.get("keep_alive", 0),
+                                "messages": [{"role": "system", "content": system},
+                                             {"role": "user", "content": f"Title: {title}\n\n{listing}"}]})
+        r.raise_for_status()
+        data = json.loads(r.json()["message"]["content"])
+        arr = data.get("titles") if isinstance(data, dict) else data
+        titles = [str(x).strip() for x in (arr or []) if str(x).strip()]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("chapter titles failed (%s) — using generic.", exc)
+    lines = ["0:00 Intro"]
+    last = 0
+    for n, i in enumerate(idxs):
+        ts = int(intro + spans[i][0])
+        if ts <= last + 9:                      # YouTube needs >=10s gaps, ascending
+            continue
+        last = ts
+        lines.append(f"{_fmt_ts(ts)} {titles[n] if n < len(titles) else f'Part {n + 1}'}")
+    return "Chapters:\n" + "\n".join(lines) if len(lines) >= 3 else ""
+
+
 def _font(size, bold=True):
     names = (["seguisb.ttf", "arialbd.ttf", "Arial Bold.ttf", "DejaVuSans-Bold.ttf"] if bold
              else ["segoeui.ttf", "arial.ttf", "Arial.ttf", "DejaVuSans.ttf"])
@@ -409,8 +449,24 @@ def main() -> None:
     meta_seo = gen.produce_metadata(config, " ".join(w[0] for w in words), topic=title, language="en")
     meta_seo.update({"clip": base, "video": out.name, "subreddit": sub, "kind": "longform",
                      "duration_min": round((intro + dur) / 60, 1), "scenes": n_scenes})
+    if lf.get("chapters", True):
+        ch = build_chapters(config, title, scenes, spans, intro)
+        if ch:
+            meta_seo["description"] = ch + "\n\n" + meta_seo["description"]
+            meta_seo["chapters"] = ch
+            log.info("added %d chapters", ch.count("\n"))
     out.with_suffix(".json").write_text(json.dumps(meta_seo, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info("DONE ✓ %s  (%.1f min, %d scenes)", out, (intro + dur) / 60, n_scenes)
+
+    # Auto thumbnail (striking frame + bold title) — ffmpeg + PIL, no GPU.
+    if lf.get("thumbnail", True):
+        try:
+            import thumb
+            th_out = get_path(config, "output") / "thumbnails" / f"{base}.png"
+            thumb.make_thumbnail(out, title, "THE DEAD HOUR", th_out)
+            log.info("thumbnail -> %s", th_out)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("thumbnail failed: %s", exc)
 
     # Funnel: auto-cut punchy vertical promo Shorts from the tensest beats (ffmpeg, no GPU).
     n_promo = int(lf.get("promo_shorts", 0))
@@ -423,6 +479,12 @@ def main() -> None:
             log.info("promo shorts produced: %d  -> output/shorts/", len(promos))
         except Exception as exc:  # noqa: BLE001
             log.warning("promo generation failed: %s", exc)
+
+    if meta.get("id"):
+        try:
+            rf.mark_used(config, meta["id"], title)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 if __name__ == "__main__":

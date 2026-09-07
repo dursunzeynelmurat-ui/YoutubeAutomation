@@ -49,7 +49,18 @@ def get_story(config, args) -> dict | None:
     return rf.select_story(config, rf.fetch_candidates(config))
 
 
+_CLIFF_KW = ("suddenly", "behind", "door", "scream", "dark", "gone", "wrong", "closer",
+             "footstep", "turned around", "then i saw", "whisper", "shadow", "blood", "dead")
+
+
+def _is_cliff(s: str) -> bool:
+    s = s.strip().lower()
+    return s.endswith(("?", "...", "…", "!")) or any(k in s for k in _CLIFF_KW)
+
+
 def split_parts(text: str, words_per_part: int) -> list[str]:
+    """Balance parts by word count, but prefer to END each non-final part on a
+    cliffhanger sentence (question / trailing off / tension keyword)."""
     import math
     sents = [s for s in re.split(r"(?<=[.!?…])\s+", text.replace("\n", " ")) if s.strip()]
     total = sum(len(s.split()) for s in sents)
@@ -60,7 +71,9 @@ def split_parts(text: str, words_per_part: int) -> list[str]:
     parts, cur, c = [], [], 0
     for s in sents:
         w = len(s.split())
-        if cur and c + w > target and len(parts) < n - 1:
+        must = cur and c + w > target and len(parts) < n - 1          # balance cap
+        nice = cur and len(parts) < n - 1 and c >= 0.7 * target and _is_cliff(cur[-1])
+        if must or nice:                                              # end part on a cliffhanger
             parts.append(" ".join(cur)); cur, c = [s], w
         else:
             cur.append(s); c += w
@@ -323,7 +336,7 @@ def make_story_videos(config, args, story: dict, body: str | None = None) -> lis
             else:
                 log.warning("[part %d/%d] SKIPPING upload (moderation flagged) — kept locally.", i, n_parts)
 
-    rf.mark_used(config, story["id"])
+    rf.mark_used(config, story["id"], story.get("title", ""))
     return outputs
 
 
