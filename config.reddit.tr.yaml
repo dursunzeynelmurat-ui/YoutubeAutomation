@@ -84,7 +84,7 @@ brainrot:
   outline_color: "&H00000000"
   highlight_color: "&H0000FFFF"
   margin_v:      520
-  whisper_model: "small"
+  whisper_model: "medium"          # better Turkish caption accuracy than 'small' (a bit slower)
   whisper_device: "auto"
   emphasis:        true
   emphasis_scale:  138
