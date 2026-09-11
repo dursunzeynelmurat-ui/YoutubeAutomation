@@ -305,13 +305,22 @@ def main() -> None:
 
     title, body, meta = get_story(config, args)
     sub = meta.get("subreddit", "nosleep")
-    log.info("long-form: r/%s — %s  (%d words)", sub, title, len(body.split()))
+    lang = config["content"].get("language", "en").lower()
+    log.info("long-form [%s]: r/%s — %s  (%d words)", lang, sub, title, len(body.split()))
 
-    # voice (horror narrator) + sentence pauses
-    vcfg = dict(config["tts"]["kokoro"])
-    vcfg["voice"] = lf.get("voice", "am_michael"); vcfg["voice_locked"] = True
-    vcfg["speed"] = lf.get("speed", 0.88)
-    arr, sr = spk.ENGINES["kokoro"](spk.clean_for_tts(body), "en", vcfg, config["tts"].get("sample_rate", 24000))
+    # voice (horror narrator) — Kokoro for English, Chatterbox for other languages (e.g. Turkish)
+    engine = config["tts"].get("engine", "kokoro")
+    if engine == "kokoro" and lang != "en":
+        engine = "chatterbox"                       # Kokoro is English-only
+    if engine == "chatterbox":
+        vcfg = dict(config["tts"].get("chatterbox", {}))
+    else:
+        vcfg = dict(config["tts"]["kokoro"])
+        vcfg["voice"] = lf.get("voice", "am_michael"); vcfg["voice_locked"] = True
+        vcfg["speed"] = lf.get("speed", 0.88)
+    log.info("voicing with %s…", engine)
+    arr, sr = spk.ENGINES[engine](spk.clean_for_tts(body, lang), lang, vcfg,
+                                  config["tts"].get("sample_rate", 24000))
     arr = np.asarray(arr, dtype=np.float32)
     audio_dir = get_path(config, "audio"); audio_dir.mkdir(parents=True, exist_ok=True)
     base = gen.slugify(title)[:40]
@@ -446,7 +455,7 @@ def main() -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
     # SEO sidecar (story profile)
-    meta_seo = gen.produce_metadata(config, " ".join(w[0] for w in words), topic=title, language="en")
+    meta_seo = gen.produce_metadata(config, " ".join(w[0] for w in words), topic=title, language=lang)
     meta_seo.update({"clip": base, "video": out.name, "subreddit": sub, "kind": "longform",
                      "duration_min": round((intro + dur) / 60, 1), "scenes": n_scenes})
     if lf.get("chapters", True):

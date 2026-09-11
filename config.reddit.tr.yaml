@@ -1,0 +1,177 @@
+# ============================================================================
+# TURKISH channel profile (3rd track).  Pass with:  --config config.reddit.tr.yaml
+# Same pipeline; stories are fetched in English, FAITHFULLY translated to Turkish
+# (generate.translate_text), then voiced with Chatterbox multilingual TTS.
+# Currently wired for the LONG-FORM path (longform.py). TR shorts = future.
+# ============================================================================
+
+paths:
+  data:      content/data
+  gameplay:  content/gameplay
+  scripts:   content/scripts
+  approved:  content/approved
+  voice:     content/voice
+  audio:     audio
+  output:    output
+  stories:   content/stories
+  music:     content/music
+  sfx:       content/sfx
+
+llm:
+  primary:     "qwen2.5:14b-instruct"   # multilingual — handles EN->TR translation well
+  fallback:    "llama3.1:8b"
+  seo_model:   "qwen2.5:14b-instruct"   # Turkish SEO reads better from the 14B
+  ollama_host: "http://localhost:11434"
+  temperature: 0.8
+  num_ctx:     8192
+  keep_alive:  0
+  request_timeout: 900
+  story_num_ctx: 12288
+
+content:
+  language:     "tr"
+  seo_profile:  "story"
+  target_words: 900
+  disclaimers:
+    tr: >-
+      Bu hikâye, herkese açık bir Reddit gönderisinden eğlence amacıyla uyarlanmıştır.
+      İsimler ve ayrıntılar değiştirilmiş olabilir. Orijinal yazar değiliz; adil kullanım
+      kapsamında anlatım olarak paylaşılmıştır.
+
+tts:
+  engine:      "chatterbox"             # Kokoro has no Turkish; Chatterbox multilingual does
+  sample_rate: 24000
+  kokoro:
+    device: "cuda"
+    voice:  "am_adam"
+    voices: ["am_adam", "am_liam"]
+    speed:  0.92
+    segment_gap_ms: 180
+  chatterbox:
+    device: "cuda"
+    voice_sample: ""                    # optional content/voice/tr_ref.wav to clone a Turkish voice
+    exaggeration: 0.4                   # calmer for horror narration
+    cfg_weight: 0.5
+
+brand:
+  channel: "Karanlık Saatler"          # TR horror channel (≈ "Dark Hours")
+  channel_description: >-
+    İnternetin en ürkütücü hikâyeleri, karanlıkta anlatılıyor. r/nosleep, r/creepypasta ve
+    daha fazlasından seçilen korku hikâyeleri; derin bir anlatım, yapay zekâ ile oluşturulmuş
+    sinematik görseller ve tedirgin edici bir müzikle. Her gece yeni kâbuslar — takip et,
+    bildirimleri aç.
+  persona: "sakin, derin sesli bir korku anlatıcısı; karanlıkta gerçek bir hikâye anlatır gibi"
+  tone: >-
+    yavaş, tekinsiz ve sinematik — sessizlik ve görseller çalışsın; asla aceleci, asla komik değil.
+  cta: "Bildirimleri aç. Her gece yeni hikâyeler."
+  affiliate_block: ""
+  hook_formats:
+    - "hikâyenin en tekinsiz anıyla başla"
+    - "bir şeyin ilk kez yanlış hissettirdiği anla aç"
+    - "korkuyu açık etmeden gerilimi tırmandır"
+  teasers:
+    - "Bazı şeyler görülmemeli."
+    - "Bu yüzden asla arkana bakma."
+    - "Işıkları açık tut."
+    - "Bunu izledikten sonra yalnız kalmak istemeyeceksin."
+
+brainrot:
+  aspect:        [1080, 1920]
+  words_per_caption: 3
+  font_size:     84
+  font:          "Arial"
+  primary_color: "&H00FFFFFF"
+  outline_color: "&H00000000"
+  highlight_color: "&H0000FFFF"
+  margin_v:      520
+  whisper_model: "small"
+  whisper_device: "auto"
+  emphasis:        true
+  emphasis_scale:  138
+  emphasis_color:  "&H0000A5FF"
+  emphasis_words:  ["çığlık","kan","ölü","öldü","polis","bıçak","koştu","aniden","karanlık","kapı","gölge"]
+
+reddit:
+  subreddits:   ["nosleep", "LetsNotMeet", "shortscarystories", "creepypasta", "scarystories", "thecrypticcompendium"]
+  sort:         "top"
+  time:         "week"
+  cache_minutes: 30
+  limit:        40
+  min_score:    500
+  min_chars:    400
+  max_chars:    9000
+  allow_over_18: false
+  user_agent:   "windows:AIPresenter.RedditStories.TR:v1.0 (by /u/yourname)"
+  request_pause: 5.0
+  max_seconds_per_part: 90
+  wpm:          150                     # Chatterbox TR pace estimate; tune if parts run long
+  card_intro_seconds: 6.0
+  teaser:       true
+  cta_seconds:  5.0
+  moderate:     true
+  onscreen_hook: true
+  hook_seconds:  2.6
+  card_animate:  true
+  progress_pill: true
+
+moods:
+  by_subreddit:
+    nosleep:              "horror"
+    LetsNotMeet:          "horror"
+    shortscarystories:    "horror"
+    creepypasta:          "horror"
+    scarystories:         "horror"
+    thecrypticcompendium: "horror"
+  default: "horror"
+  profiles:
+    horror: {voice: "", speed: 0.9}
+
+audio:
+  music_volume:  0.12
+  duck_threshold: 0.03
+  duck_ratio:    8
+  sfx_volume:    0.5
+  loudness_i:    -14
+  loudness_tp:   -1.5
+  loudness_lra:  11
+
+youtube:
+  privacy_status: "private"
+  category_id:    "24"
+  made_for_kids:  false
+  client_secret:  "client_secret_reddit_tr.json"   # TR channel's own OAuth client (git-ignored)
+  token_file:     "token_reddit_tr.json"           # created on first auth (git-ignored)
+  default_tags:   ["shorts", "korku", "korkuhikayeleri", "reddit", "nosleep", "hikaye"]
+  title_suffix:   " #Shorts"
+  make_playlists: true
+  playlist_privacy: "public"
+
+longform:
+  aspect:          [1920, 1080]
+  seconds_per_scene: 20
+  music_mood:      "horror"
+  ambient_mood:    "horror"
+  thumbnail:       true
+  chapters:        true
+  title_card:      true
+  intro_seconds:   6.0
+  grain:           true
+  grain_strength:  5
+  crf:             22
+  subtitles:       true
+  image_model:     "stabilityai/sdxl-turbo"
+  image_w:         1024
+  image_h:         576
+  image_steps:     4
+  image_guidance:  0.0
+  models_dir:      "models"
+  promo_shorts:    4
+  promo_seconds:   30
+  promo_cta:       "Tüm hikâye kanalda"
+  hero_every_minutes: 3
+  hero_max:        10
+  svd_frames:      14
+  svd_fps:         8
+  svd_motion:      90
+  svd_decode_chunk: 2
+  svd_model:       "stabilityai/stable-video-diffusion-img2vid-xt"

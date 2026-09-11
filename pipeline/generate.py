@@ -216,9 +216,12 @@ def produce_script(config: dict, topic: str, fmt: str = "long", language: str | 
         hook = rotate_pick("hook_format", list(hooks)) if hooks else ""
         if hook:
             log.info("hook style: %s", hook)
-    messages = build_messages(topic, language, target, data_block, data_names,
+    # Stories are drafted in English (faithful), then translated to the target language so
+    # the "never shorten/alter" guarantee survives; other formats generate in-language.
+    gen_lang = "en" if (fmt == "story" and language != "en") else language
+    messages = build_messages(topic, gen_lang, target, data_block, data_names,
                               fmt=fmt, brand=brand, hook=hook)
-    log.info("generating with '%s' (lang=%s, %s)…", model, language, fmt)
+    log.info("generating with '%s' (lang=%s, %s)…", model, gen_lang, fmt)
     # Faithful story narration must not be cut off: use a low temp (no creative drift),
     # a large context (fit the whole post + full narration), and an uncapped output.
     if fmt == "story":
@@ -238,6 +241,11 @@ def produce_script(config: dict, topic: str, fmt: str = "long", language: str | 
     body = resp.json().get("message", {}).get("content", "").strip()
     if not body:
         sys.exit("[fatal] model returned empty output.")
+
+    # Faithful translation for non-English story channels (EN draft -> target language).
+    if fmt == "story" and language != "en":
+        log.info("translating narration to %s…", language)
+        body = translate_text(config, body, language, model=model)
 
     document = (
         f"{disclaimer}\n\n---\n"
@@ -332,6 +340,31 @@ def produce_metadata(config: dict, text: str, topic: str = "", language: str | N
     parts = [desc, cta, " ".join(hashtags), affiliate, disclaimer]
     description = "\n\n".join(p for p in parts if p).strip()
     return {"title": title, "description": description, "tags": tags, "hashtags": hashtags}
+
+
+def translate_text(config: dict, text: str, target_lang: str, model: str | None = None) -> str:
+    """Faithfully translate spoken narration into target_lang (no summarizing/omitting).
+    Falls back to the original text on any error."""
+    llm = config["llm"]; host = llm["ollama_host"]
+    lang_name = {"tr": "Turkish", "en": "English", "es": "Spanish", "de": "German",
+                 "fr": "French"}.get(target_lang, target_lang)
+    system = (f"You are a professional translator. Translate the text into {lang_name}. Preserve EVERY "
+              f"sentence, detail, name and nuance exactly — do NOT summarize, add, omit, reorder, or "
+              f"soften anything; keep the same length. Output natural, spoken {lang_name}, and ONLY the "
+              f"translation (no notes).")
+    try:
+        model = model or pick_model(llm["primary"], llm["fallback"], check_ollama(host))
+        payload = {"model": model, "stream": False, "keep_alive": llm.get("keep_alive", 0),
+                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}],
+                   "options": {"temperature": 0.2, "num_ctx": llm.get("story_num_ctx", 12288),
+                               "num_predict": llm.get("story_num_predict", -1)}}
+        resp = requests.post(f"{host}/api/chat", json=payload, timeout=llm.get("request_timeout", 600))
+        resp.raise_for_status()
+        out = resp.json().get("message", {}).get("content", "").strip()
+        return out or text
+    except Exception as exc:  # noqa: BLE001
+        log.warning("translation failed (%s) — keeping original text.", exc)
+        return text
 
 
 def produce_teaser(config: dict, title: str, body: str, language: str = "en") -> str:

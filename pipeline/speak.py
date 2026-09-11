@@ -71,8 +71,8 @@ def _speak_times(text: str) -> str:
     return text
 
 
-def clean_for_tts(raw: str) -> str:
-    """Strip markdown / frontmatter so only spoken words remain, and normalize clock times.
+def clean_for_tts(raw: str, language: str = "en") -> str:
+    """Strip markdown / frontmatter so only spoken words remain; normalize clock times (EN only).
 
     The disclaimer (plain text at the top) is intentionally KEPT and spoken.
     """
@@ -81,7 +81,8 @@ def clean_for_tts(raw: str) -> str:
     text = "\n".join(lines)
     text = re.sub(r"^#{1,6}\s*", "", text, flags=re.MULTILINE)       # headings
     text = re.sub(r"[*_`>]", "", text)                              # md emphasis/quotes
-    text = _speak_times(text)                                        # 3:07 -> "three oh seven"
+    if language == "en":
+        text = _speak_times(text)                                    # 3:07 -> "three oh seven"
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
