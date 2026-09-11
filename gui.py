@@ -58,6 +58,8 @@ class Studio:
                    command=lambda: self.config_var.set("config.reddit.yaml")).pack(side="left")
         ttk.Button(top, text="config.yaml (finance)", width=20,
                    command=lambda: self.config_var.set("config.yaml")).pack(side="left", padx=4)
+        ttk.Button(top, text="reddit.tr (Türkçe)", width=16,
+                   command=lambda: self.config_var.set("config.reddit.tr.yaml")).pack(side="left")
 
         self.nb = ttk.Notebook(root); self.nb.pack(fill="both", expand=True, padx=10, pady=6)
         self._tab_longform()
