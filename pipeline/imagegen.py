@@ -77,7 +77,7 @@ def generate_images(prompts, out_dir: Path, cfg: dict, seed: int = 1234,
     paths = []
     for i, prompt in enumerate(prompts, 1):
         g = torch.Generator(device="cpu").manual_seed(seed + i)
-        full = f"{prompt.strip()}, {style}"
+        full = f"{style}, {prompt.strip()}"          # style FIRST so CLIP's 77-token cap can't drop it
         img = pipe(prompt=full, negative_prompt=neg, num_inference_steps=steps,
                    guidance_scale=guidance, width=w, height=h, generator=g).images[0]
         p = out_dir / f"scene_{i:03d}.png"

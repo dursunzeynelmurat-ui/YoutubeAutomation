@@ -54,7 +54,8 @@ def get_story(config, args) -> tuple[str, str, dict]:
     """Return (title, narration_body, story_meta)."""
     if args.script:
         title, body = _parse_script(Path(resolve(args.script)).read_text(encoding="utf-8"))
-        return title, body, {"subreddit": args.subreddit or "nosleep", "id": Path(args.script).stem}
+        return title, body, {"subreddit": args.subreddit or "nosleep", "id": Path(args.script).stem,
+                             "body_en": body}
     if args.id:
         rec = get_path(config, "stories") / f"{args.id}.json"
         if not rec.exists():
@@ -64,7 +65,9 @@ def get_story(config, args) -> tuple[str, str, dict]:
         d = rf.select_story(config, rf.fetch_candidates(config))
         if not d:
             sys.exit("[fatal] no story fetched/selected.")
-    _, body = gen.produce_script(config, f"Title: {d['title']}\n\n{d['selftext']}", fmt="story")
+    _, body, body_en = gen.produce_script(config, f"Title: {d['title']}\n\n{d['selftext']}",
+                                          fmt="story", return_source=True)
+    d["body_en"] = body_en                            # English draft: image prompts build from this
     return d["title"], body, d
 
 
@@ -350,7 +353,13 @@ def main() -> None:
             end = dur
         spans.append((max(0.0, start), max(start + 0.5, end)))
 
-    prompts = scene_prompts(config, title, scenes)
+    # Image prompts come from the ENGLISH scenes (SDXL is English; avoids off-topic/cultural
+    # renders when the narration is another language). Timing/subtitles use the voiced scenes.
+    en_body = meta.get("body_en") or body
+    en_scenes = split_into_n(en_body, n_scenes)
+    if len(en_scenes) != n_scenes:                    # keep 1:1 with the voiced scenes
+        en_scenes = (en_scenes + scenes)[:n_scenes] if len(en_scenes) < n_scenes else en_scenes[:n_scenes]
+    prompts = scene_prompts(config, title, en_scenes)
 
     tmp = Path(tempfile.mkdtemp(prefix=f"longform_{base}_"))
     out_dir = get_path(config, "output") / "longform"; out_dir.mkdir(parents=True, exist_ok=True)
@@ -390,7 +399,8 @@ def main() -> None:
         clips = []
         if lf.get("title_card", True):
             intro = float(lf.get("intro_seconds", 6.0))
-            tcard = render_title_card(title, sub, tmp / "title.png", w, h,
+            card_title = gen.translate_text(config, title, lang) if lang != "en" else title
+            tcard = render_title_card(card_title, sub, tmp / "title.png", w, h,
                                       bg=(imgs[0] if imgs else None))
             tclip = tmp / "clip_000.mp4"
             ken_burns_clip(tcard, intro, tclip, w, h, zoom_in=True)

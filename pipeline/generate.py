@@ -182,7 +182,8 @@ def build_messages(topic: str, language: str, target_words: int,
 
 
 def produce_script(config: dict, topic: str, fmt: str = "long", language: str | None = None,
-                   model: str | None = None, data_dir: str | None = None):
+                   model: str | None = None, data_dir: str | None = None,
+                   return_source: bool = False):
     """Generate a script via Ollama and write a dated draft to content/scripts/.
     Returns (out_path, body). Reused by generate() and brainrot.py's one-shot mode."""
     llm = config["llm"]
@@ -243,6 +244,7 @@ def produce_script(config: dict, topic: str, fmt: str = "long", language: str | 
         sys.exit("[fatal] model returned empty output.")
 
     # Faithful translation for non-English story channels (EN draft -> target language).
+    body_src = body                                   # the English draft (for image prompts, SEO topics)
     if fmt == "story" and language != "en":
         log.info("translating narration to %s…", language)
         body = translate_text(config, body, language, model=model)
@@ -263,7 +265,7 @@ def produce_script(config: dict, topic: str, fmt: str = "long", language: str | 
         n += 1
     out_path.write_text(document, encoding="utf-8")
     log.info("draft written: %s (~%d words)", out_path, len(body.split()))
-    return out_path, body
+    return (out_path, body, body_src) if return_source else (out_path, body)
 
 
 def produce_metadata(config: dict, text: str, topic: str = "", language: str | None = None) -> dict:
