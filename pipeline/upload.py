@@ -84,11 +84,18 @@ def load_meta(config: dict, name: str, args, video: Path | None = None) -> dict:
     if sidecar.exists():
         meta = json.loads(sidecar.read_text(encoding="utf-8"))
     yt = config["youtube"]
+    # Long-form (16:9) videos live in output/longform/ — they are NOT Shorts, so never
+    # append the " #Shorts" suffix or the shorts-flavored default tags to them.
+    is_longform = video is not None and video.parent.name == "longform"
     title = args.title or meta.get("title") or name
-    if yt.get("title_suffix") and yt["title_suffix"].strip().lower() not in title.lower():
+    if (not is_longform and yt.get("title_suffix")
+            and yt["title_suffix"].strip().lower() not in title.lower()):
         title = (title + yt["title_suffix"])[:100]
     description = args.description or meta.get("description", "")
-    tags = (meta.get("tags") or []) + yt.get("default_tags", [])
+    default_tags = [] if is_longform else yt.get("default_tags", [])
+    tags = (meta.get("tags") or []) + default_tags
+    if is_longform:
+        tags = [t for t in tags if t.strip().lower().lstrip("#") != "shorts"]
     return {"title": title[:100], "description": description, "tags": list(dict.fromkeys(tags))[:30]}
 
 
@@ -201,13 +208,37 @@ def upload_one(service, config, name: str, video: Path, args, privacy: str) -> s
     }
     log.info("uploading %s  (privacy=%s)", video.name, status["privacyStatus"])
     log.info("  title: %s", meta["title"])
-    media = MediaFileUpload(str(video), chunksize=-1, resumable=True, mimetype="video/*")
+    # Chunked resumable upload (checkpoints) so a dropped connection resumes instead of
+    # restarting the whole file; retry transient network/5xx errors with backoff.
+    import socket
+    import ssl
+    import time as _time
+    from googleapiclient.errors import HttpError
+    chunk_mb = int(yt.get("upload_chunk_mb", 8))
+    media = MediaFileUpload(str(video), chunksize=chunk_mb * 1024 * 1024, resumable=True, mimetype="video/*")
     request = service.videos().insert(part="snippet,status", body=body, media_body=media)
     resp = None
+    retriable = (ssl.SSLError, socket.error, ConnectionError, BrokenPipeError, OSError, TimeoutError)
+    fails = 0
     while resp is None:
-        status, resp = request.next_chunk()
-        if status:
-            log.info("  upload %d%%", int(status.progress() * 100))
+        try:
+            status, resp = request.next_chunk()
+        except HttpError as e:
+            if getattr(e, "resp", None) is not None and e.resp.status in (500, 502, 503, 504):
+                fails += 1
+            else:
+                raise
+        except retriable:
+            fails += 1
+        else:
+            if status:
+                log.info("  upload %d%%", int(status.progress() * 100))
+            continue
+        if fails > 8:
+            raise RuntimeError(f"upload failed after {fails} transient errors")
+        wait = min(60, 2 ** fails)
+        log.warning("  transient upload error (#%d) — retrying in %ds (resuming where it stopped)…", fails, wait)
+        _time.sleep(wait)
     vid = resp.get("id")
     log.info("done ✓  https://youtu.be/%s  (privacy=%s)", vid, privacy)
     # Record clip -> video id so promos can link back to their OG long video.
