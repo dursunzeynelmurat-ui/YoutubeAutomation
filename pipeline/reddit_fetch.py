@@ -213,63 +213,85 @@ def _post_id_from_url(s: str) -> str | None:
     return None
 
 
-def fetch_full_story(config, url_or_id: str) -> dict | None:
-    """Download the COMPLETE, untruncated story for one post via Reddit's public JSON
-    endpoint (https://www.reddit.com/comments/<id>.json). RSS <content> can clip very
-    long posts; this returns the whole selftext so narration is never shortened.
+def _story_from_post_rss(xml_text: str, pid: str) -> dict | None:
+    """Parse a single-post comments RSS feed; the FIRST entry (t3_<id>) is the post itself,
+    the rest are comments. Returns the post as a story record, or None if not present."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    for e in root.findall(f"{_ATOM}entry"):
+        raw_id = (e.findtext(f"{_ATOM}id") or "").strip()       # t3_<id> for the post, t1_ for comments
+        eid = raw_id.split("_", 1)[1] if "_" in raw_id else raw_id
+        is_post = raw_id.startswith("t3_") or eid == pid
+        if not is_post:
+            continue
+        title = _html.unescape((e.findtext(f"{_ATOM}title") or "").strip())
+        author = "user"
+        a = e.find(f"{_ATOM}author/{_ATOM}name")
+        if a is not None and a.text:
+            author = a.text.strip().lstrip("/").removeprefix("u/") or "user"
+        cat = e.find(f"{_ATOM}category")
+        sub = (cat.get("label") or cat.get("term")).lstrip("r/") if cat is not None and (cat.get("label") or cat.get("term")) else ""
+        link_el = e.find(f"{_ATOM}link")
+        permalink = link_el.get("href") if link_el is not None else ""
+        body = _extract_selftext(e.findtext(f"{_ATOM}content") or "")
+        if body:
+            return {"id": eid or pid, "subreddit": sub, "title": title, "author": author,
+                    "selftext": body, "score": None, "num_comments": None, "permalink": permalink}
+    return None
 
-    Accepts a full permalink, a redd.it/redditmedia embed or share link, a t3_ fullname,
-    or a bare post id. Returns a story record (same shape as fetch_candidates entries)."""
+
+def fetch_full_story(config, url_or_id: str) -> dict | None:
+    """Download the COMPLETE, untruncated story for one post. Accepts a full permalink, a
+    redd.it / redditmedia embed or share link, a t3_ fullname, or a bare post id.
+
+    Reddit hard-403s the anonymous .json endpoint, but the per-post RSS feed
+    (https://www.reddit.com/comments/<id>.rss) is allowed and its first entry carries the
+    full post body. So we grab RSS first (same channel the listing feeds use) and only fall
+    back to .json if RSS somehow fails."""
     pid = _post_id_from_url(url_or_id)
     if not pid:
         log.warning("could not find a Reddit post id in %r", url_or_id)
         return None
     r = config.get("reddit", {})
     ua = {"User-Agent": r.get("user_agent", "AIPresenter/1.0 by u/yourname"),
-          "Accept": "application/json"}
-    url = f"https://www.reddit.com/comments/{pid}.json?raw_json=1&limit=1"
-    import random
-    delay = 3.0
-    for attempt in range(5):
-        try:
-            resp = requests.get(url, headers=ua, timeout=25)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("request failed (%s) for %s", exc, url)
-            return None
-        if resp.status_code == 429:
-            wait = float(resp.headers.get("retry-after", delay)) + random.uniform(0, 2.5)
-            log.info("rate-limited (429); waiting %.1fs then retrying...", wait)
-            time.sleep(wait); delay *= 2
-            continue
-        if resp.status_code in (403, 404):
-            log.warning("Reddit returned %d for post %s (blocked/removed?).", resp.status_code, pid)
-            return None
-        resp.raise_for_status()
-        break
-    else:
-        return None
+          "Accept": "application/atom+xml, application/xml, text/xml"}
+
+    # 1) RSS (works where .json is 403-blocked)
     try:
-        listing = resp.json()
-        data = listing[0]["data"]["children"][0]["data"]
+        story = _story_from_post_rss(_get_feed(f"https://www.reddit.com/comments/{pid}.rss", ua), pid)
     except Exception as exc:  # noqa: BLE001
-        log.warning("unexpected JSON shape for post %s: %s", pid, exc)
+        log.warning("RSS fetch failed for post %s: %s", pid, exc)
+        story = None
+
+    # 2) JSON fallback (rarely reachable, but try before giving up)
+    if not story:
+        try:
+            jua = {"User-Agent": ua["User-Agent"], "Accept": "application/json"}
+            resp = requests.get(f"https://www.reddit.com/comments/{pid}.json?raw_json=1&limit=1",
+                                headers=jua, timeout=25)
+            if resp.status_code == 200:
+                data = resp.json()[0]["data"]["children"][0]["data"]
+                body = _html.unescape(data.get("selftext") or "").strip()
+                if body:
+                    story = {"id": pid, "subreddit": data.get("subreddit") or "",
+                             "title": _html.unescape(data.get("title") or "").strip(),
+                             "author": data.get("author") or "user", "selftext": body,
+                             "score": data.get("score"), "num_comments": data.get("num_comments"),
+                             "permalink": "https://www.reddit.com" + (data.get("permalink") or "")}
+            else:
+                log.info(".json fallback returned %d (expected — Reddit blocks it).", resp.status_code)
+        except Exception as exc:  # noqa: BLE001
+            log.info(".json fallback failed (%s).", exc)
+
+    if not story:
+        log.warning("could not retrieve post %s (removed, or a link/image post with no text?).", pid)
         return None
-    body = _html.unescape(data.get("selftext") or "").strip()
-    if not body:
-        log.warning("post %s has no selftext (link/image/video post?).", pid)
-        return None
-    story = {
-        "id": pid,
-        "subreddit": data.get("subreddit") or r.get("subreddits", ["nosleep"])[0],
-        "title": _html.unescape(data.get("title") or "").strip(),
-        "author": data.get("author") or "user",
-        "selftext": body,
-        "score": data.get("score"),
-        "num_comments": data.get("num_comments"),
-        "permalink": "https://www.reddit.com" + (data.get("permalink") or ""),
-    }
+    if not story.get("subreddit"):
+        story["subreddit"] = r.get("subreddits", ["nosleep"])[0]
     log.info("downloaded full story r/%s: %s (%d words)",
-             story["subreddit"], story["title"][:70], len(body.split()))
+             story["subreddit"], story["title"][:70], len(story["selftext"].split()))
     return story
 
 
