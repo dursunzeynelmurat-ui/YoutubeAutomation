@@ -190,6 +190,89 @@ def fetch_candidates(config) -> list[dict]:
     return out
 
 
+_ID_PATTERNS = [
+    re.compile(r"/comments/([a-z0-9]{4,10})", re.I),   # .../comments/abc123/title/
+    re.compile(r"redd\.it/([a-z0-9]{4,10})", re.I),     # https://redd.it/abc123  (share link)
+    re.compile(r"[?&]comment=|t3_([a-z0-9]{4,10})", re.I),
+]
+
+
+def _post_id_from_url(s: str) -> str | None:
+    """Pull the base-36 post id out of any Reddit link form: full permalink, old./new.,
+    redd.it share link, redditmedia embed link, or a bare id/t3_ fullname."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    bare = s.split("_", 1)[1] if s.lower().startswith("t3_") else s
+    if re.fullmatch(r"[a-z0-9]{4,10}", bare, re.I):      # already just an id
+        return bare
+    for pat in _ID_PATTERNS:
+        m = pat.search(s)
+        if m and m.lastindex:
+            return m.group(1)
+    return None
+
+
+def fetch_full_story(config, url_or_id: str) -> dict | None:
+    """Download the COMPLETE, untruncated story for one post via Reddit's public JSON
+    endpoint (https://www.reddit.com/comments/<id>.json). RSS <content> can clip very
+    long posts; this returns the whole selftext so narration is never shortened.
+
+    Accepts a full permalink, a redd.it/redditmedia embed or share link, a t3_ fullname,
+    or a bare post id. Returns a story record (same shape as fetch_candidates entries)."""
+    pid = _post_id_from_url(url_or_id)
+    if not pid:
+        log.warning("could not find a Reddit post id in %r", url_or_id)
+        return None
+    r = config.get("reddit", {})
+    ua = {"User-Agent": r.get("user_agent", "AIPresenter/1.0 by u/yourname"),
+          "Accept": "application/json"}
+    url = f"https://www.reddit.com/comments/{pid}.json?raw_json=1&limit=1"
+    import random
+    delay = 3.0
+    for attempt in range(5):
+        try:
+            resp = requests.get(url, headers=ua, timeout=25)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("request failed (%s) for %s", exc, url)
+            return None
+        if resp.status_code == 429:
+            wait = float(resp.headers.get("retry-after", delay)) + random.uniform(0, 2.5)
+            log.info("rate-limited (429); waiting %.1fs then retrying...", wait)
+            time.sleep(wait); delay *= 2
+            continue
+        if resp.status_code in (403, 404):
+            log.warning("Reddit returned %d for post %s (blocked/removed?).", resp.status_code, pid)
+            return None
+        resp.raise_for_status()
+        break
+    else:
+        return None
+    try:
+        listing = resp.json()
+        data = listing[0]["data"]["children"][0]["data"]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("unexpected JSON shape for post %s: %s", pid, exc)
+        return None
+    body = _html.unescape(data.get("selftext") or "").strip()
+    if not body:
+        log.warning("post %s has no selftext (link/image/video post?).", pid)
+        return None
+    story = {
+        "id": pid,
+        "subreddit": data.get("subreddit") or r.get("subreddits", ["nosleep"])[0],
+        "title": _html.unescape(data.get("title") or "").strip(),
+        "author": data.get("author") or "user",
+        "selftext": body,
+        "score": data.get("score"),
+        "num_comments": data.get("num_comments"),
+        "permalink": "https://www.reddit.com" + (data.get("permalink") or ""),
+    }
+    log.info("downloaded full story r/%s: %s (%d words)",
+             story["subreddit"], story["title"][:70], len(body.split()))
+    return story
+
+
 def select_story(config, candidates: list[dict]) -> dict | None:
     if not candidates:
         return None
@@ -278,9 +361,26 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Fetch + select Reddit stories (RSS, no API keys).")
     ap.add_argument("--list", action="store_true", help="list candidate stories")
     ap.add_argument("--select", action="store_true", help="pick one and save its record")
+    ap.add_argument("--url", help="download ONE full story from a Reddit link/embed link/id and save it")
+    ap.add_argument("--id", help="optional id/filename to save under when using --url")
     ap.add_argument("--config", help="path to config (use config.reddit.yaml)")
     args = ap.parse_args()
     config = load_config(args.config)
+
+    if args.url:                                     # download the complete story from a link
+        story = fetch_full_story(config, args.url)
+        if not story:
+            sys.exit("[fatal] could not download a story from that link.")
+        if args.id:
+            story["id"] = args.id
+        d = get_path(config, "stories"); d.mkdir(parents=True, exist_ok=True)
+        out = d / f"{story['id']}.json"
+        out.write_text(json.dumps(story, indent=2, ensure_ascii=False), encoding="utf-8")
+        log.info("saved full story: %s", out)
+        log.info("render it:")
+        log.info("  9:16 shorts :  python pipeline/redditstory.py --id %s --config %s", story["id"], args.config or "config.reddit.yaml")
+        log.info("  16:9 long   :  python pipeline/longform.py   --id %s --config %s", story["id"], args.config or "config.reddit.yaml")
+        return
 
     cands = fetch_candidates(config)
     if args.list:

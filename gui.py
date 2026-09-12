@@ -309,6 +309,25 @@ class Studio:
             self._script("reddit_fetch.py", "--list"), "List candidates")).grid(row=1, column=0, sticky="w")
         ttk.Button(f, text="Edit subreddits (open config)", command=lambda: _open_path(BASE / self.config_var.get())
                    ).grid(row=1, column=1, padx=8)
+        ttk.Separator(f, orient="horizontal").grid(row=2, column=0, columnspan=4, sticky="ew", pady=12)
+        ttk.Label(f, text="Download one full story from a Reddit link (permalink, share or embed link).\n"
+                          "Gets the COMPLETE untruncated text — use this for long stories.",
+                  foreground="#888").grid(row=3, column=0, columnspan=4, sticky="w", pady=(0, 6))
+        ttk.Label(f, text="link / id:").grid(row=4, column=0, sticky="w")
+        self.fx_url = ttk.Entry(f, width=60); self.fx_url.grid(row=4, column=1, columnspan=2, sticky="w")
+        ttk.Label(f, text="save as id:").grid(row=5, column=0, sticky="w", pady=4)
+        self.fx_id = ttk.Entry(f, width=20); self.fx_id.grid(row=5, column=1, sticky="w")
+        ttk.Label(f, text="(optional — defaults to the Reddit post id)", foreground="#888").grid(row=5, column=2, sticky="w")
+        ttk.Button(f, text="Download full story", command=self._download_story).grid(row=6, column=0, pady=10, sticky="w")
+
+    def _download_story(self):
+        url = self.fx_url.get().strip()
+        if not url:
+            return messagebox.showwarning("Download", "Paste a Reddit link or post id.")
+        cmd = self._script("reddit_fetch.py", "--url", url)
+        if self.fx_id.get().strip():
+            cmd += ["--id", self.fx_id.get().strip()]
+        self.run(cmd, "Download full story")
 
     def _tab_compile(self):
         f = ttk.Frame(self.nb, padding=12); self.nb.add(f, text="Compilation")
